@@ -1,0 +1,14 @@
+{
+  "name": "alice",
+  "version": "0.1.0",
+  "description": "ALICE (AI Local Interface for Code Editor) - Tauri v2 + React + LM Studio クライアント",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter alice-app dev",
+    "build": "pnpm --filter alice-app build",
+    "tauri": "pnpm --filter alice-app tauri"
+  },
+  "keywords": ["tauri", "rust", "ai", "lm-studio", "claude-code"],
+  "license": "MIT"
+}
