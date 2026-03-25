@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       { id: "photo", visible: true },
       { id: "news", visible: true },
       { id: "systemMonitor", visible: true },
+      { id: "claudeCode", visible: true },
       { id: "info", visible: true },
     ],
     photoFolder: null,
@@ -55,6 +56,7 @@ export const WIDGET_LABELS: Record<string, string> = {
   photo: "写真",
   news: "ニュース",
   systemMonitor: "システムモニター",
+  claudeCode: "Claude Code",
   info: "ALICE について",
 };
 

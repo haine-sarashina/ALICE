@@ -241,6 +241,10 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
       }
       // 作成先を展開
       setExpandedDirs(prev => new Set(prev).add(creating.parentDir));
+      // ファイルの場合は作成したファイルを開く
+      if (creating.type === "file") {
+        onFileOpen(newPath, "");
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -292,64 +296,81 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
   }
 
   // ドラッグ&ドロップによるファイル移動
+  // WebView2 では dataTransfer が正しく動作しないため useRef で管理
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const dragSourceRef = useRef<string | null>(null);
 
   function handleDragStart(e: React.DragEvent, item: FileItem) {
-    e.dataTransfer.setData("text/plain", item.path);
+    dragSourceRef.current = item.path;
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", item.name);
   }
 
   function handleDragOver(e: React.DragEvent, item: FileItem) {
+    e.stopPropagation();
     e.preventDefault();
-    e.dataTransfer.dropEffect = (item.isDir && item.accessible) ? "move" : "none";
+    e.dataTransfer.dropEffect = "move";
     if (item.isDir && item.accessible) {
       setDragOverPath(item.path);
+    } else {
+      setDragOverPath(null);
     }
   }
 
-  function handleDragLeave(e: React.DragEvent) {
-    // 子要素への移動では閉じない
-    const related = e.relatedTarget as HTMLElement | null;
-    if (related && (e.currentTarget as HTMLElement).contains(related)) return;
-    setDragOverPath(null);
-  }
-
-  // ファイルリスト全体のdragover（空き領域でも進入禁止にしない）
   function handleListDragOver(e: React.DragEvent) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }
 
-  async function handleDrop(e: React.DragEvent, targetDir: FileItem) {
-    e.preventDefault();
-    e.stopPropagation();
+  function handleDragEnd() {
+    dragSourceRef.current = null;
     setDragOverPath(null);
-    if (!targetDir.isDir || !targetDir.accessible) return;
-    const sourcePath = e.dataTransfer.getData("text/plain");
-    if (!sourcePath || sourcePath === targetDir.path) return;
+  }
+
+  async function moveFile(sourcePath: string, targetDirPath: string) {
+    if (sourcePath === targetDirPath) return;
     // 自分自身の子にドロップしないようチェック
-    if (targetDir.path.startsWith(sourcePath + "\\") || targetDir.path.startsWith(sourcePath + "/")) return;
+    if (targetDirPath.startsWith(sourcePath + "\\") || targetDirPath.startsWith(sourcePath + "/")) return;
 
     const fileName = sourcePath.split(/[\\/]/).pop();
     if (!fileName) return;
-    const sep = targetDir.path.includes("\\") ? "\\" : "/";
-    const newPath = targetDir.path + sep + fileName;
+    const sep = targetDirPath.includes("\\") ? "\\" : "/";
+    const newPath = targetDirPath + sep + fileName;
     if (newPath === sourcePath) return;
 
     try {
       await invoke("rename_path", { oldPath: sourcePath, newPath });
-      // 移動元と移動先をリロード
       const sourceParent = sourcePath.replace(/[\\/][^\\/]+$/, "");
-      const reloadDirs = [sourceParent, targetDir.path];
-      for (const dir of reloadDirs) {
+      for (const dir of [sourceParent, targetDirPath]) {
         const items = await loadDir(dir);
-        if (items) {
-          setDirContents(prev => new Map(prev).set(dir, items));
-        }
+        if (items) setDirContents(prev => new Map(prev).set(dir, items));
       }
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  function handleDrop(e: React.DragEvent, target: FileItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverPath(null);
+    const sourcePath = dragSourceRef.current;
+    dragSourceRef.current = null;
+    if (!sourcePath) return;
+    // フォルダならそのフォルダへ、ファイルならその親フォルダへ移動
+    const destDir = target.isDir && target.accessible
+      ? target.path
+      : target.path.replace(/[\\/][^\\/]+$/, "");
+    moveFile(sourcePath, destDir);
+  }
+
+  function handleListDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOverPath(null);
+    const sourcePath = dragSourceRef.current;
+    dragSourceRef.current = null;
+    if (!sourcePath || !currentDir) return;
+    moveFile(sourcePath, currentDir);
   }
 
   // 選択ファイルが変更されたら、またはファイルタブに切り替わったら表示範囲にスクロール
@@ -386,8 +407,8 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
             draggable={!renamingPath}
             onDragStart={(e) => handleDragStart(e, item)}
             onDragOver={(e) => handleDragOver(e, item)}
-            onDragLeave={handleDragLeave}
             onDrop={(e) => handleDrop(e, item)}
+            onDragEnd={handleDragEnd}
           >
             {item.isDir && (
               <span className="tree-arrow">{isExpanded ? "▾" : "▸"}</span>
@@ -499,7 +520,7 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
 
       <div className="pane-content">
         {activeTab === "files" && (
-          <div className="file-list" ref={fileListRef} onDragOver={handleListDragOver}>
+          <div className="file-list" ref={fileListRef} onDragOver={handleListDragOver} onDrop={handleListDrop}>
             <div className="dir-header">
               <button className="btn-small" onClick={openDirectory} title="別のフォルダを開く">
                 開く
@@ -586,6 +607,20 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
           }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button className="context-menu-item" onClick={() => {
+            const dir = contextMenu.item.isDir ? contextMenu.item.path : contextMenu.item.path.replace(/[\\/][^\\/]+$/, "");
+            setContextMenu(null);
+            startCreate(dir, "file");
+          }}>
+            新規ファイル
+          </button>
+          <button className="context-menu-item" onClick={() => {
+            const dir = contextMenu.item.isDir ? contextMenu.item.path : contextMenu.item.path.replace(/[\\/][^\\/]+$/, "");
+            setContextMenu(null);
+            startCreate(dir, "folder");
+          }}>
+            新規フォルダ
+          </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); startRename(contextMenu.item.path, contextMenu.item.name); }}>
             名前を変更
           </button>

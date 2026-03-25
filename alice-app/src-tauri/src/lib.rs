@@ -72,6 +72,7 @@ impl Default for AppSettings {
                     WidgetItem { id: "photo".into(), visible: true },
                     WidgetItem { id: "news".into(), visible: true },
                     WidgetItem { id: "systemMonitor".into(), visible: true },
+                    WidgetItem { id: "claudeCode".into(), visible: true },
                     WidgetItem { id: "info".into(), visible: true },
                 ],
                 photo_folder: None,
@@ -434,6 +435,51 @@ fn decode_html_entities(s: &str) -> String {
     result
 }
 
+// ─── Claude Code 使用状況 ───
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeUsageInfo {
+    logged_in: bool,
+    auth_method: Option<String>,
+    email: Option<String>,
+    org_name: Option<String>,
+    subscription_type: Option<String>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn get_claude_usage() -> Result<ClaudeUsageInfo, String> {
+    // claude auth status は JSON を返す
+    let output = silent_command("claude")
+        .args(["auth", "status"])
+        .output()
+        .map_err(|e| format!("claude コマンドの実行に失敗: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // JSON パース
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout) {
+        Ok(ClaudeUsageInfo {
+            logged_in: val.get("loggedIn").and_then(|v| v.as_bool()).unwrap_or(false),
+            auth_method: val.get("authMethod").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            email: val.get("email").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            org_name: val.get("orgName").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            subscription_type: val.get("subscriptionType").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            error: None,
+        })
+    } else {
+        Ok(ClaudeUsageInfo {
+            logged_in: false,
+            auth_method: None,
+            email: None,
+            org_name: None,
+            subscription_type: None,
+            error: Some(stdout.trim().to_string()),
+        })
+    }
+}
+
 // ─── LM Studio チャットプロキシ ───
 
 #[tauri::command]
@@ -449,6 +495,22 @@ fn lm_chat(url: String, body: String) -> Result<String, String> {
 
 struct SystemState(Mutex<System>);
 
+// GPU/NPU のキャッシュ（PowerShell は重いので 10 秒間隔でのみ再取得）
+struct GpuCacheState {
+    gpu: GpuStats,
+    npu_usage: Option<f32>,
+    last_update: std::time::Instant,
+    vendor_detected: bool,        // 初回検出済みか
+    vendor: GpuVendor,
+}
+
+#[derive(Clone, PartialEq)]
+enum GpuVendor { Unknown, Nvidia, Amd, None }
+
+struct GpuCache(Mutex<GpuCacheState>);
+
+const GPU_CACHE_SECS: u64 = 10;
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemStats {
@@ -461,10 +523,15 @@ pub struct SystemStats {
     gpu_temp: Option<f32>,
     vram_used_mb: Option<u64>,
     vram_total_mb: Option<u64>,
+    gpu_name: Option<String>,
+    npu_usage: Option<f32>,
 }
 
 #[tauri::command]
-fn get_system_stats(system_state: tauri::State<'_, SystemState>) -> SystemStats {
+fn get_system_stats(
+    system_state: tauri::State<'_, SystemState>,
+    gpu_cache: tauri::State<'_, GpuCache>,
+) -> SystemStats {
     let mut sys = system_state.0.lock().unwrap();
     sys.refresh_cpu_all();
     sys.refresh_memory();
@@ -488,7 +555,24 @@ fn get_system_stats(system_state: tauri::State<'_, SystemState>) -> SystemStats 
         })
         .and_then(|c| c.temperature());
 
-    let (gpu_usage, gpu_temp, vram_used_mb, vram_total_mb) = try_get_gpu_stats();
+    // GPU/NPU: キャッシュが新しければそのまま返す
+    let mut cache = gpu_cache.0.lock().unwrap();
+    if cache.last_update.elapsed().as_secs() >= GPU_CACHE_SECS {
+        let gpu = fetch_gpu_stats(&cache.vendor, cache.vendor_detected);
+        if !cache.vendor_detected {
+            cache.vendor = if gpu.name.as_deref().map_or(false, |n| n.to_lowercase().contains("nvidia")) {
+                GpuVendor::Nvidia
+            } else if gpu.name.is_some() {
+                GpuVendor::Amd
+            } else {
+                GpuVendor::None
+            };
+            cache.vendor_detected = true;
+        }
+        cache.npu_usage = fetch_npu_usage();
+        cache.gpu = gpu;
+        cache.last_update = std::time::Instant::now();
+    }
 
     SystemStats {
         cpu_usage,
@@ -496,36 +580,142 @@ fn get_system_stats(system_state: tauri::State<'_, SystemState>) -> SystemStats 
         memory_total_mb,
         memory_usage,
         cpu_temp,
-        gpu_usage,
-        gpu_temp,
-        vram_used_mb,
-        vram_total_mb,
+        gpu_usage: cache.gpu.usage,
+        gpu_temp: cache.gpu.temp,
+        vram_used_mb: cache.gpu.vram_used_mb,
+        vram_total_mb: cache.gpu.vram_total_mb,
+        gpu_name: cache.gpu.name.clone(),
+        npu_usage: cache.npu_usage,
     }
 }
 
-fn try_get_gpu_stats() -> (Option<f32>, Option<f32>, Option<u64>, Option<u64>) {
-    use std::process::Command;
-    let output = Command::new("nvidia-smi")
+struct GpuStats {
+    usage: Option<f32>,
+    temp: Option<f32>,
+    vram_used_mb: Option<u64>,
+    vram_total_mb: Option<u64>,
+    name: Option<String>,
+}
+
+/// コンソールウィンドウを表示しない Command を作成
+fn silent_command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
+fn fetch_gpu_stats(vendor: &GpuVendor, detected: bool) -> GpuStats {
+    let empty = GpuStats { usage: None, temp: None, vram_used_mb: None, vram_total_mb: None, name: None };
+
+    if detected {
+        // ベンダー確定済み → そのベンダーだけ試す
+        match vendor {
+            GpuVendor::Nvidia => try_nvidia_gpu().unwrap_or(empty),
+            GpuVendor::Amd => try_amd_gpu().unwrap_or(empty),
+            _ => empty,
+        }
+    } else {
+        // 初回: NVIDIA → AMD の順に試す
+        if let Some(stats) = try_nvidia_gpu() {
+            return stats;
+        }
+        if let Some(stats) = try_amd_gpu() {
+            return stats;
+        }
+        empty
+    }
+}
+
+fn try_nvidia_gpu() -> Option<GpuStats> {
+    let output = silent_command("nvidia-smi")
         .args([
-            "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total",
+            "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,name",
             "--format=csv,noheader,nounits",
         ])
-        .output();
+        .output()
+        .ok()?;
 
-    if let Ok(out) = output {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout);
-            let parts: Vec<&str> = s.trim().split(',').collect();
-            if parts.len() >= 4 {
-                let usage = parts[0].trim().parse::<f32>().ok();
-                let temp = parts[1].trim().parse::<f32>().ok();
-                let vram_used = parts[2].trim().parse::<u64>().ok();
-                let vram_total = parts[3].trim().parse::<u64>().ok();
-                return (usage, temp, vram_used, vram_total);
-            }
-        }
+    if !output.status.success() { return None; }
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.trim().split(',').collect();
+    if parts.len() >= 4 {
+        Some(GpuStats {
+            usage: parts[0].trim().parse().ok(),
+            temp: parts[1].trim().parse().ok(),
+            vram_used_mb: parts[2].trim().parse().ok(),
+            vram_total_mb: parts[3].trim().parse().ok(),
+            name: parts.get(4).map(|s| s.trim().to_string()),
+        })
+    } else {
+        None
     }
-    (None, None, None, None)
+}
+
+fn try_amd_gpu() -> Option<GpuStats> {
+    let ps_script = r#"
+$gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AMD|Radeon' } | Select-Object -First 1
+if (-not $gpu) { exit 1 }
+$name = $gpu.Name
+$vramTotal = [math]::Round($gpu.AdapterRAM / 1MB)
+try {
+    $counters = Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction Stop
+    $usage = ($counters.CounterSamples | Where-Object { $_.CookedValue -gt 0 } | Measure-Object -Property CookedValue -Sum).Sum
+    if ($null -eq $usage) { $usage = 0 }
+} catch { $usage = -1 }
+try {
+    $vramCounters = Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction Stop
+    $vramUsed = [math]::Round(($vramCounters.CounterSamples | Measure-Object -Property CookedValue -Sum).Sum / 1MB)
+} catch { $vramUsed = -1 }
+Write-Output "$name|$usage|$vramUsed|$vramTotal"
+"#;
+
+    let output = silent_command("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+        .output()
+        .ok()?;
+
+    if !output.status.success() { return None; }
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.trim().split('|').collect();
+    if parts.len() >= 4 {
+        let name = parts[0].trim().to_string();
+        let usage = parts[1].trim().parse::<f32>().ok().filter(|v| *v >= 0.0);
+        let vram_used = parts[2].trim().parse::<i64>().ok().filter(|v| *v >= 0).map(|v| v as u64);
+        let vram_total = parts[3].trim().parse::<u64>().ok().filter(|v| *v > 0);
+
+        Some(GpuStats {
+            usage,
+            temp: None,
+            vram_used_mb: vram_used,
+            vram_total_mb: vram_total,
+            name: Some(name),
+        })
+    } else {
+        None
+    }
+}
+
+fn fetch_npu_usage() -> Option<f32> {
+    let ps_script = r#"
+try {
+    $counters = Get-Counter '\NPU Utilization(*)\Utilization Percentage' -ErrorAction Stop
+    $usage = ($counters.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum
+    Write-Output $usage
+} catch { exit 1 }
+"#;
+
+    let output = silent_command("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+        .output()
+        .ok()?;
+
+    if !output.status.success() { return None; }
+    let s = String::from_utf8_lossy(&output.stdout);
+    s.trim().parse::<f32>().ok().filter(|v| *v >= 0.0)
 }
 
 // ─── Git 連携 ───
@@ -769,6 +959,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(SystemState(Mutex::new(sys)))
+        .manage(GpuCache(Mutex::new(GpuCacheState {
+            gpu: GpuStats { usage: None, temp: None, vram_used_mb: None, vram_total_mb: None, name: None },
+            npu_usage: None,
+            last_update: std::time::Instant::now() - std::time::Duration::from_secs(GPU_CACHE_SECS + 1),
+            vendor_detected: false,
+            vendor: GpuVendor::Unknown,
+        })))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -797,6 +994,7 @@ pub fn run() {
             git_has_remote,
             git_has_unpushed,
             lm_chat,
+            get_claude_usage,
         ])
         .on_window_event(|window, event| {
             // メインウィンドウが閉じられたらアプリ全体を終了

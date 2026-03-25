@@ -4,6 +4,7 @@ import WeatherWidget from "./WeatherWidget";
 import SystemMonitorWidget from "./SystemMonitorWidget";
 import PhotoWidget from "./PhotoWidget";
 import NewsWidget from "./NewsWidget";
+import ClaudeCodeWidget from "./ClaudeCodeWidget";
 import type { WidgetItem, AppSettings } from "../lib/settings";
 
 function ClockWidget() {
@@ -77,6 +78,7 @@ export default function RightPane({ widgetItems, settings, onPhotoClick, onNewsC
         />
       );
       case "systemMonitor": return <SystemMonitorWidget />;
+      case "claudeCode": return <ClaudeCodeWidget />;
       case "info": return <InfoWidget />;
       default: return null;
     }

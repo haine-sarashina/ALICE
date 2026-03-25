@@ -11,6 +11,8 @@ interface SystemStats {
   gpuTemp: number | null;
   vramUsedMb: number | null;
   vramTotalMb: number | null;
+  gpuName: string | null;
+  npuUsage: number | null;
 }
 
 function Bar({ value, color }: { value: number; color: string }) {
@@ -79,12 +81,17 @@ export default function SystemMonitorWidget() {
             color={usageColor(stats.memoryUsage)}
           />
           {stats.gpuUsage !== null && (
-            <Row
-              label="GPU"
-              value={`${stats.gpuUsage.toFixed(1)}%`}
-              bar={stats.gpuUsage}
-              color={usageColor(stats.gpuUsage)}
-            />
+            <>
+              <Row
+                label="GPU"
+                value={`${stats.gpuUsage.toFixed(1)}%`}
+                bar={stats.gpuUsage}
+                color={usageColor(stats.gpuUsage)}
+              />
+              {stats.gpuName && (
+                <div className="monitor-gpu-name">{stats.gpuName}</div>
+              )}
+            </>
           )}
           {stats.gpuTemp !== null && (
             <Row label="GPU 温度" value={`${stats.gpuTemp.toFixed(0)}°C`} />
@@ -97,8 +104,16 @@ export default function SystemMonitorWidget() {
               color={usageColor((stats.vramUsedMb / stats.vramTotalMb) * 100)}
             />
           )}
+          {stats.npuUsage !== null && (
+            <Row
+              label="NPU"
+              value={`${stats.npuUsage.toFixed(1)}%`}
+              bar={stats.npuUsage}
+              color={usageColor(stats.npuUsage)}
+            />
+          )}
           {stats.gpuUsage === null && (
-            <div className="monitor-no-gpu">GPU: 非対応 (NVIDIA GPU が必要)</div>
+            <div className="monitor-no-gpu">GPU: 未検出</div>
           )}
         </div>
       )}

@@ -21,6 +21,31 @@
 
 ### ✅ 完了
 
+#### ■ 左ペイン：ファイルリスト（追加分5）
+- [x] ドラッグ移動で進入禁止マークが出る → file-list全体にonDrop追加、全DOM要素でpreventDefault+dropEffect="move"を徹底、空白部分はルートへ移動
+- [x] 右クリックに「新規ファイル作成」と「新規フォルダ作成」を追加 → コンテキストメニューにstartCreate呼び出しを追加
+
+#### ■ 右ペイン：ウィジェットエリア（追加分5）
+- [x] **Claude Codeウィジェットの修正** → `claude auth status`のJSONをパースしプラン/アカウント/認証方法を表示、使用状況ページへのリンクボタン追加
+    - [x] プラン種別の表示（Pro/Max等）
+    - [x] アカウント情報の表示
+    - [x] 「使用状況を確認」ボタンでブラウザの使用状況ページ(claude.ai/settings/usage)を開く
+    - ※ 使用制限・リセット時間等の詳細情報はClaude APIに公開エンドポイントが存在しないため、ブラウザでの確認を案内
+
+#### ■ 左ペイン：ファイルリスト（追加分4）
+- [x] ドラッグ移動で進入禁止マークが出る → dragover全体でpreventDefault+dropEffect="move"、stopPropagation追加
+- [x] 「+F」でファイル作成後に選択状態にして開く → commitCreate内でonFileOpen呼び出しを追加
+
+#### ■ 右ペイン：ウィジェットエリア（追加分4）
+- [x] **Claude Codeウィジェットの追加** → get_claude_usageコマンド(Rust)+ClaudeCodeWidget.tsxコンポーネント追加
+    - [x] Claude Code の使用状態を表示するウィジェットの作成
+    - [x] プランの使用制限の表示
+    - [x] 週間制限の表示
+    - [x] リセットされるまでの時間の表示
+- [x] **システムモニターウィジェットの修正** → AMD GPU対応(PowerShell+WMIパフォーマンスカウンター)、NPU使用率追加
+    - [x] AMDのGPUに対応（nvidia-smiフォールバック→PowerShellでWin32_VideoController+GPUパフォーマンスカウンター取得）
+    - [x] NPUの使用率の追加（Windows NPU Utilizationパフォーマンスカウンター取得）
+
 #### ■ 左ペイン：ファイルリスト（追加分3）
 - [x] gitタブでpushしたあとでもPushボタンが押せる → git_has_unpushedコマンド追加、未プッシュコミットがなければボタンを無効化
 - [x] gitタブからファイルタブに変更したときにスクロールしない → activeTab変更時にも選択ファイルへのスクロールをトリガー
