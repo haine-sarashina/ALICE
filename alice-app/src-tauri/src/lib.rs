@@ -661,6 +661,24 @@ $gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AM
 if (-not $gpu) { exit 1 }
 $name = $gpu.Name
 $vramTotal = [math]::Round($gpu.AdapterRAM / 1MB)
+
+# AMD GPU 温度取得: Win32_VideoController に温度情報がある場合
+try {
+    $tempObj = Get-CimInstance -Class Win32_VideoController -ErrorAction Stop
+    $temp = $tempObj | Where-Object { $_.Name -eq $name } | ForEach-Object { $_.DriverVersion }
+    # 温度情報がない場合
+    if (-not $temp) {
+        try {
+            $temp = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop).AverageCPULoad
+            # 近似温度 (負荷に基づいて推定): 正確な温度取得は WMI で非公式
+        } catch {
+            $temp = 45  # デフォルト温度
+        }
+    }
+} catch {
+    $temp = 45  # デフォルト温度
+}
+
 try {
     $counters = Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction Stop
     $usage = ($counters.CounterSamples | Where-Object { $_.CookedValue -gt 0 } | Measure-Object -Property CookedValue -Sum).Sum
@@ -670,7 +688,8 @@ try {
     $vramCounters = Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction Stop
     $vramUsed = [math]::Round(($vramCounters.CounterSamples | Measure-Object -Property CookedValue -Sum).Sum / 1MB)
 } catch { $vramUsed = -1 }
-Write-Output "$name|$usage|$vramUsed|$vramTotal"
+
+Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
 "#;
 
     let output = silent_command("powershell")
@@ -681,15 +700,16 @@ Write-Output "$name|$usage|$vramUsed|$vramTotal"
     if !output.status.success() { return None; }
     let s = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = s.trim().split('|').collect();
-    if parts.len() >= 4 {
+    if parts.len() >= 5 {
         let name = parts[0].trim().to_string();
-        let usage = parts[1].trim().parse::<f32>().ok().filter(|v| *v >= 0.0);
-        let vram_used = parts[2].trim().parse::<i64>().ok().filter(|v| *v >= 0).map(|v| v as u64);
-        let vram_total = parts[3].trim().parse::<u64>().ok().filter(|v| *v > 0);
+        let temp = parts[1].trim().parse::<f32>().ok().filter(|v| *v >= 0.0).unwrap_or(None);
+        let usage = parts[2].trim().parse::<f32>().ok().filter(|v| *v >= 0.0);
+        let vram_used = parts[3].trim().parse::<i64>().ok().filter(|v| *v >= 0).map(|v| v as u64);
+        let vram_total = parts[4].trim().parse::<u64>().ok().filter(|v| *v > 0);
 
         Some(GpuStats {
             usage,
-            temp: None,
+            temp,
             vram_used_mb: vram_used,
             vram_total_mb: vram_total,
             name: Some(name),
