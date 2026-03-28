@@ -569,7 +569,7 @@ fn get_system_stats(
             };
             cache.vendor_detected = true;
         }
-        cache.npu_usage = fetch_npu_usage();
+        cache.npu_usage = fetch_npu_usage(gpu.name.as_deref());
         cache.gpu = gpu;
         cache.last_update = std::time::Instant::now();
     }
@@ -719,14 +719,35 @@ Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
     }
 }
 
-fn fetch_npu_usage() -> Option<f32> {
-    let ps_script = r#"
+fn fetch_npu_usage(gpu_name: Option<&str>) -> Option<f32> {
+    // AMD GPU の場合：GPU の名前に基づいて NPU コンテナを探す
+    let ps_script = if let Some(name) = gpu_name {
+        // AMD GPU の場合：NPU コンテナを探す
+        let mut script = String::from(r#"try {"#);
+        script.push_str(&format!(r#"$gpuName = "{}"'"#, name));
+        script.push_str(r#"
+$counters = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfCounter_GPU | Where-Object { $_.ObjectName -like "*NPU*" -or $_.CounterName -like "*NPU*" }
+if (-not $counters) {
+    # 別のパターン：GPU Engine NPU
+    $counters = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfCounter_GPU | Where-Object { $_.CounterName -like "*NPU*" }
+}
+if (-not $counters) { exit 1 }
+$usage = $counters.CookedValue
+if ($null -eq $usage) { $usage = 0 }
+Write-Output $usage
+} catch { exit 1 }
+"#);
+        script
+    } else {
+        // 汎用：標準の NPU コンテナを試す
+        String::from(r#"
 try {
     $counters = Get-Counter '\NPU Utilization(*)\Utilization Percentage' -ErrorAction Stop
     $usage = ($counters.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum
     Write-Output $usage
 } catch { exit 1 }
-"#;
+"#)
+    };
 
     let output = silent_command("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
