@@ -76,7 +76,7 @@ export default function SystemMonitorWidget() {
           )}
           <Row
             label="メモリ"
-            value={`${stats.memoryUsedMb.toLocaleString()} / ${stats.memoryTotalMb.toLocaleString()} MB`}
+            value={`${(stats.memoryUsedMb / 1024).toFixed(1)} / ${(stats.memoryTotalMb / 1024).toFixed(1)} GB`}
             bar={stats.memoryUsage}
             color={usageColor(stats.memoryUsage)}
           />
@@ -99,7 +99,7 @@ export default function SystemMonitorWidget() {
           {stats.vramUsedMb !== null && stats.vramTotalMb !== null && (
             <Row
               label="VRAM"
-              value={stats.vramTotalMb >= 1024 ? `${(stats.vramUsedMb/1024).toFixed(1)} / ${(stats.vramTotalMb/1024).toFixed(1)} GB` : `${stats.vramUsedMb} / ${stats.vramTotalMb} MB`}
+              value={`${(stats.vramUsedMb / 1024).toFixed(1)} / ${(stats.vramTotalMb / 1024).toFixed(1)} GB`}
               bar={(stats.vramUsedMb / stats.vramTotalMb) * 100}
               color={usageColor((stats.vramUsedMb / stats.vramTotalMb) * 100)}
             />

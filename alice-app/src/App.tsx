@@ -101,30 +101,33 @@ export default function App() {
         }
         // 復元完了後にウィンドウを表示
         await win.show();
-
-        // F11 キーでフルスクリーン切替
-        const handleKey = async (e: KeyboardEvent) => {
-          if (e.key === "F11") {
-            e.preventDefault();
-            try {
-              const win = getCurrentWindow();
-              const isFullscreen = await win.isFullscreen();
-              if (isFullscreen) {
-                await win.setAlwaysOnTop(false);
-                await win.setFullscreen(false);
-              } else {
-                await win.setAlwaysOnTop(true);
-                await win.setFullscreen(true);
-              }
-            } catch {}
-          }
-        };
-        window.addEventListener("keydown", handleKey);
       })
       .catch(() => {
         // 復元失敗時もウィンドウを表示
         getCurrentWindow().show().catch(() => {});
       });
+  }, []);
+
+  // F11 キーでフルスクリーン切替
+  useEffect(() => {
+    const handleKey = async (e: KeyboardEvent) => {
+      if (e.key === "F11") {
+        e.preventDefault();
+        try {
+          const win = getCurrentWindow();
+          const isFullscreen = await win.isFullscreen();
+          if (isFullscreen) {
+            await win.setAlwaysOnTop(false);
+            await win.setFullscreen(false);
+          } else {
+            await win.setAlwaysOnTop(true);
+            await win.setFullscreen(true);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
 

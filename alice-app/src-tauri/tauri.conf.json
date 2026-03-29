@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.haine.alice-app",
   "build": {
-    "beforeDevCommand": "pnpm run dev",
-    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "node scripts/free-port.cjs && pnpm run dev",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm run build",
     "frontendDist": "../dist"
   },
@@ -18,7 +18,7 @@
         "height": 800,
         "decorations": false,
         "shadow": true,
-        "visible": true,
+        "visible": false,
         "dragDropEnabled": false
       },
       {

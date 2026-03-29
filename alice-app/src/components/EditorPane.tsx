@@ -50,6 +50,17 @@ export default function EditorPane({
   const lineNumberRef = useRef<HTMLDivElement>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // タブコンテキストメニュー
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const tabContextMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!tabContextMenu) return;
+    const handleClick = () => setTabContextMenu(null);
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, [tabContextMenu]);
+
   // 画像関連
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
   const [imageZoom, setImageZoom] = useState<number | null>(null); // null = fit mode
@@ -202,7 +213,7 @@ export default function EditorPane({
             onClick={() => onTabSelect(tab.id)}
             onContextMenu={(e) => {
               e.preventDefault();
-              tabs.filter(t => t.id !== tab.id).forEach(t => onTabClose(t.id));
+              setTabContextMenu({ x: e.clientX, y: e.clientY, tabId: tab.id });
             }}
           >
             <span className="tab-label">
@@ -220,6 +231,24 @@ export default function EditorPane({
         ))}
         <button className="tab-btn new-tab" onClick={onNewTab}>+</button>
       </div>
+
+      {tabContextMenu && (
+        <div
+          ref={tabContextMenuRef}
+          className="context-menu"
+          style={{ position: "fixed", left: tabContextMenu.x, top: tabContextMenu.y, zIndex: 9999 }}
+        >
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              tabs.filter(t => t.id !== tabContextMenu.tabId).forEach(t => onTabClose(t.id));
+              setTabContextMenu(null);
+            }}
+          >
+            他のタブをすべて閉じる
+          </div>
+        </div>
+      )}
 
       {tabType === "text" && (
         <div className="editor-toolbar">

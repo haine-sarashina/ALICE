@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 use tauri::Manager;
@@ -495,21 +495,22 @@ fn lm_chat(url: String, body: String) -> Result<String, String> {
 
 struct SystemState(Mutex<System>);
 
-// GPU/NPU のキャッシュ（PowerShell は重いので 10 秒間隔でのみ再取得）
-struct GpuCacheState {
-    gpu: GpuStats,
+// GPU/NPU のキャッシュ（バックグラウンドスレッドが定期更新）
+struct GpuCacheData {
+    usage: Option<f32>,
+    temp: Option<f32>,
+    vram_used_mb: Option<u64>,
+    vram_total_mb: Option<u64>,
+    name: Option<String>,
     npu_usage: Option<f32>,
-    last_update: std::time::Instant,
-    vendor_detected: bool,        // 初回検出済みか
-    vendor: GpuVendor,
 }
+
+struct GpuCache(Arc<Mutex<GpuCacheData>>);
 
 #[derive(Clone, PartialEq)]
 enum GpuVendor { Unknown, Nvidia, Amd, None }
 
-struct GpuCache(Mutex<GpuCacheState>);
-
-const GPU_CACHE_SECS: u64 = 10;
+const GPU_POLL_SECS: u64 = 10;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -527,6 +528,40 @@ pub struct SystemStats {
     npu_usage: Option<f32>,
 }
 
+/// バックグラウンドスレッドで GPU/NPU を定期取得（メインスレッドをブロックしない）
+fn spawn_gpu_poller(cache: Arc<Mutex<GpuCacheData>>) {
+    std::thread::Builder::new()
+        .name("gpu-poller".into())
+        .spawn(move || {
+            let mut vendor = GpuVendor::Unknown;
+            let mut vendor_detected = false;
+            loop {
+                let gpu = fetch_gpu_stats(&vendor, vendor_detected);
+                if !vendor_detected {
+                    vendor = if gpu.name.as_deref().map_or(false, |n| n.to_lowercase().contains("nvidia")) {
+                        GpuVendor::Nvidia
+                    } else if gpu.name.is_some() {
+                        GpuVendor::Amd
+                    } else {
+                        GpuVendor::None
+                    };
+                    vendor_detected = true;
+                }
+                {
+                    let mut c = cache.lock().unwrap();
+                    c.usage = gpu.usage;
+                    c.temp = gpu.temp;
+                    c.vram_used_mb = gpu.vram_used_mb;
+                    c.vram_total_mb = gpu.vram_total_mb;
+                    c.name = gpu.name;
+                    c.npu_usage = gpu.npu_usage;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(GPU_POLL_SECS));
+            }
+        })
+        .expect("failed to spawn gpu-poller thread");
+}
+
 #[tauri::command]
 fn get_system_stats(
     system_state: tauri::State<'_, SystemState>,
@@ -537,7 +572,6 @@ fn get_system_stats(
     sys.refresh_memory();
 
     let cpu_usage = sys.global_cpu_usage();
-
     let memory_used_mb = sys.used_memory() / 1024 / 1024;
     let memory_total_mb = sys.total_memory() / 1024 / 1024;
     let memory_usage = if memory_total_mb > 0 {
@@ -545,6 +579,7 @@ fn get_system_stats(
     } else {
         0.0
     };
+    drop(sys);
 
     let components = sysinfo::Components::new_with_refreshed_list();
     let cpu_temp = components
@@ -555,24 +590,8 @@ fn get_system_stats(
         })
         .and_then(|c| c.temperature());
 
-    // GPU/NPU: キャッシュが新しければそのまま返す
-    let mut cache = gpu_cache.0.lock().unwrap();
-    if cache.last_update.elapsed().as_secs() >= GPU_CACHE_SECS {
-        let gpu = fetch_gpu_stats(&cache.vendor, cache.vendor_detected);
-        if !cache.vendor_detected {
-            cache.vendor = if gpu.name.as_deref().map_or(false, |n| n.to_lowercase().contains("nvidia")) {
-                GpuVendor::Nvidia
-            } else if gpu.name.is_some() {
-                GpuVendor::Amd
-            } else {
-                GpuVendor::None
-            };
-            cache.vendor_detected = true;
-        }
-        cache.npu_usage = fetch_npu_usage(gpu.name.as_deref());
-        cache.gpu = gpu;
-        cache.last_update = std::time::Instant::now();
-    }
+    // GPU/NPU: バックグラウンドスレッドが更新したキャッシュを読むだけ
+    let gpu = gpu_cache.0.lock().unwrap();
 
     SystemStats {
         cpu_usage,
@@ -580,12 +599,12 @@ fn get_system_stats(
         memory_total_mb,
         memory_usage,
         cpu_temp,
-        gpu_usage: cache.gpu.usage,
-        gpu_temp: cache.gpu.temp,
-        vram_used_mb: cache.gpu.vram_used_mb,
-        vram_total_mb: cache.gpu.vram_total_mb,
-        gpu_name: cache.gpu.name.clone(),
-        npu_usage: cache.npu_usage,
+        gpu_usage: gpu.usage,
+        gpu_temp: gpu.temp,
+        vram_used_mb: gpu.vram_used_mb,
+        vram_total_mb: gpu.vram_total_mb,
+        gpu_name: gpu.name.clone(),
+        npu_usage: gpu.npu_usage,
     }
 }
 
@@ -595,6 +614,7 @@ struct GpuStats {
     vram_used_mb: Option<u64>,
     vram_total_mb: Option<u64>,
     name: Option<String>,
+    npu_usage: Option<f32>,
 }
 
 /// コンソールウィンドウを表示しない Command を作成
@@ -609,17 +629,15 @@ fn silent_command(program: &str) -> std::process::Command {
 }
 
 fn fetch_gpu_stats(vendor: &GpuVendor, detected: bool) -> GpuStats {
-    let empty = GpuStats { usage: None, temp: None, vram_used_mb: None, vram_total_mb: None, name: None };
+    let empty = GpuStats { usage: None, temp: None, vram_used_mb: None, vram_total_mb: None, name: None, npu_usage: None };
 
     if detected {
-        // ベンダー確定済み → そのベンダーだけ試す
         match vendor {
             GpuVendor::Nvidia => try_nvidia_gpu().unwrap_or(empty),
             GpuVendor::Amd => try_amd_gpu().unwrap_or(empty),
             _ => empty,
         }
     } else {
-        // 初回: NVIDIA → AMD の順に試す
         if let Some(stats) = try_nvidia_gpu() {
             return stats;
         }
@@ -649,6 +667,7 @@ fn try_nvidia_gpu() -> Option<GpuStats> {
             vram_used_mb: parts[2].trim().parse().ok(),
             vram_total_mb: parts[3].trim().parse().ok(),
             name: parts.get(4).map(|s| s.trim().to_string()),
+            npu_usage: None,
         })
     } else {
         None
@@ -656,43 +675,41 @@ fn try_nvidia_gpu() -> Option<GpuStats> {
 }
 
 fn try_amd_gpu() -> Option<GpuStats> {
+    // GPU + NPU を1回の PowerShell 呼び出しで取得（Get-Counter は1回だけ）
     let ps_script = r#"
 $gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AMD|Radeon' } | Select-Object -First 1
 if (-not $gpu) { exit 1 }
 $name = $gpu.Name
-$vramTotal = [math]::Round($gpu.AdapterRAM / 1MB)
 
-# AMD GPU 温度取得: Win32_VideoController に温度情報がある場合
+# VRAM 容量: レジストリの qwMemorySize (64bit) を優先
+$vramTotal = 0
 try {
-    $tempObj = Get-CimInstance -Class Win32_VideoController -ErrorAction Stop
-    $temp = $tempObj | Where-Object { $_.Name -eq $name } | ForEach-Object { $_.DriverVersion }
-    # 温度情報がない場合
-    if (-not $temp) {
-        try {
-            $temp = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop).AverageCPULoad
-            # 近似温度 (負荷に基づいて推定): 正確な温度取得は WMI で非公式
-        } catch {
-            $temp = 45  # デフォルト温度
+    $regPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+    Get-ChildItem $regPath -ErrorAction Stop | ForEach-Object {
+        $desc = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DriverDesc
+        if ($desc -match 'AMD|Radeon') {
+            $qw = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'HardwareInformation.qwMemorySize'
+            if ($qw -and $qw -gt 0) { $vramTotal = [math]::Round($qw / 1MB) }
         }
     }
-} catch {
-    $temp = 45  # デフォルト温度
-}
+} catch {}
+if ($vramTotal -eq 0) { $vramTotal = [math]::Round($gpu.AdapterRAM / 1MB) }
 
+$usage = -1; $vramUsed = -1; $npuUsage = -1
+
+# 全カウンターを1回の Get-Counter で取得（PowerShell 呼び出しコスト最小化）
 try {
-    $counters = Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction Stop
-    $usage = ($counters.CounterSamples | Where-Object { $_.CookedValue -gt 0 } | Measure-Object -Property CookedValue -Sum).Sum
-    if ($null -eq $usage) { $usage = 0 }
-} catch { $usage = -1 }
-try {
-    $vramCounters = Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction Stop
-    $vramUsed = [math]::Round(($vramCounters.CounterSamples | Measure-Object -Property CookedValue -Sum).Sum / 1MB)
-} catch { $vramUsed = -1 }
+    $counters = Get-Counter '\GPU Engine(*)\Utilization Percentage','\GPU Process Memory(*)\Dedicated Usage' -ErrorAction Stop
+    $samples = $counters.CounterSamples
+    $s3d = $samples | Where-Object { $_.Path -match 'engtype_3D' -and $_.CookedValue -gt 0 }
+    $usage = if ($s3d) { ($s3d | Measure-Object -Property CookedValue -Sum).Sum } else { 0 }
+    $sNpu = $samples | Where-Object { $_.Path -match 'engtype_NPU|engtype_Compute' -and $_.CookedValue -gt 0 }
+    if ($sNpu) { $npuUsage = ($sNpu | Measure-Object -Property CookedValue -Sum).Sum }
+    $sMem = $samples | Where-Object { $_.Path -match 'GPU Process Memory' -and $_.CookedValue -gt 0 }
+    if ($sMem) { $vramUsed = [math]::Round(($sMem | Measure-Object -Property CookedValue -Sum).Sum / 1MB) }
+} catch {}
 
-# 32GB GPU の場合：AdapterRAM が 32768 になるため、その場合は 32GB (32768MB) と解釈
-$vramTotal = if ($vramTotal -eq 32768) { 32768 } else { [math]::Round($gpu.AdapterRAM / 1MB) }
-
-Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
+Write-Output "$name|-1|$usage|$vramUsed|$vramTotal|$npuUsage"
 "#;
 
     let output = silent_command("powershell")
@@ -709,6 +726,7 @@ Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
         let usage = parts[2].trim().parse::<f32>().ok().filter(|v| *v >= 0.0);
         let vram_used = parts[3].trim().parse::<i64>().ok().filter(|v| *v >= 0).map(|v| v as u64);
         let vram_total = parts[4].trim().parse::<u64>().ok().filter(|v| *v > 0);
+        let npu_usage = parts.get(5).and_then(|s| s.trim().parse::<f32>().ok()).filter(|v| *v >= 0.0);
 
         Some(GpuStats {
             usage,
@@ -716,50 +734,11 @@ Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
             vram_used_mb: vram_used,
             vram_total_mb: vram_total,
             name: Some(name),
+            npu_usage,
         })
     } else {
         None
     }
-}
-
-fn fetch_npu_usage(gpu_name: Option<&str>) -> Option<f32> {
-    // AMD GPU の場合：GPU の名前に基づいて NPU コンテナを探す
-    let ps_script = if let Some(name) = gpu_name {
-        // AMD GPU の場合：NPU コンテナを探す
-        let mut script = String::from(r#"try {"#);
-        script.push_str(&format!(r#"$gpuName = "{}"'"#, name));
-        script.push_str(r#"
-$counters = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfCounter_GPU | Where-Object { $_.ObjectName -like "*NPU*" -or $_.CounterName -like "*NPU*" }
-if (-not $counters) {
-    # 別のパターン：GPU Engine NPU
-    $counters = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfCounter_GPU | Where-Object { $_.CounterName -like "*NPU*" }
-}
-if (-not $counters) { exit 1 }
-$usage = $counters.CookedValue
-if ($null -eq $usage) { $usage = 0 }
-Write-Output $usage
-} catch { exit 1 }
-"#);
-        script
-    } else {
-        // 汎用：標準の NPU コンテナを試す
-        String::from(r#"
-try {
-    $counters = Get-Counter '\NPU Utilization(*)\Utilization Percentage' -ErrorAction Stop
-    $usage = ($counters.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum
-    Write-Output $usage
-} catch { exit 1 }
-"#)
-    };
-
-    let output = silent_command("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-        .output()
-        .ok()?;
-
-    if !output.status.success() { return None; }
-    let s = String::from_utf8_lossy(&output.stdout);
-    s.trim().parse::<f32>().ok().filter(|v| *v >= 0.0)
 }
 
 // ─── Git 連携 ───
@@ -1001,15 +980,15 @@ pub fn run() {
     sys.refresh_cpu_all();
     sys.refresh_memory();
 
+    // GPU/NPU データ収集用バックグラウンドスレッドを起動
+    let gpu_cache_data = Arc::new(Mutex::new(GpuCacheData {
+        usage: None, temp: None, vram_used_mb: None, vram_total_mb: None, name: None, npu_usage: None,
+    }));
+    spawn_gpu_poller(Arc::clone(&gpu_cache_data));
+
     tauri::Builder::default()
         .manage(SystemState(Mutex::new(sys)))
-        .manage(GpuCache(Mutex::new(GpuCacheState {
-            gpu: GpuStats { usage: None, temp: None, vram_used_mb: None, vram_total_mb: None, name: None },
-            npu_usage: None,
-            last_update: std::time::Instant::now() - std::time::Duration::from_secs(GPU_CACHE_SECS + 1),
-            vendor_detected: false,
-            vendor: GpuVendor::Unknown,
-        })))
+        .manage(GpuCache(gpu_cache_data))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
