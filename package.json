@@ -10,5 +10,8 @@
     "tauri": "pnpm --filter alice-app tauri"
   },
   "keywords": ["tauri", "rust", "ai", "lm-studio", "claude-code"],
-  "license": "MIT"
+  "license": "MIT",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
 }

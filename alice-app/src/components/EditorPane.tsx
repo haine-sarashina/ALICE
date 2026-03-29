@@ -200,6 +200,10 @@ export default function EditorPane({
             key={tab.id}
             className={`tab-item ${tab.id === activeTabId ? "active" : ""}`}
             onClick={() => onTabSelect(tab.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              tabs.filter(t => t.id !== tab.id).forEach(t => onTabClose(t.id));
+            }}
           >
             <span className="tab-label">
               {tab.modified ? "● " : ""}

@@ -689,11 +689,14 @@ try {
     $vramUsed = [math]::Round(($vramCounters.CounterSamples | Measure-Object -Property CookedValue -Sum).Sum / 1MB)
 } catch { $vramUsed = -1 }
 
+# 32GB GPU の場合：AdapterRAM が 32768 になるため、その場合は 32GB (32768MB) と解釈
+$vramTotal = if ($vramTotal -eq 32768) { 32768 } else { [math]::Round($gpu.AdapterRAM / 1MB) }
+
 Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
 "#;
 
     let output = silent_command("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
         .output()
         .ok()?;
 
@@ -702,7 +705,7 @@ Write-Output "$name|$temp|$usage|$vramUsed|$vramTotal"
     let parts: Vec<&str> = s.trim().split('|').collect();
     if parts.len() >= 5 {
         let name = parts[0].trim().to_string();
-        let temp = parts[1].trim().parse::<f32>().ok().filter(|v| *v >= 0.0).unwrap_or(None);
+        let temp = parts[1].trim().parse::<f32>().ok().filter(|v| *v >= 0.0);
         let usage = parts[2].trim().parse::<f32>().ok().filter(|v| *v >= 0.0);
         let vram_used = parts[3].trim().parse::<i64>().ok().filter(|v| *v >= 0).map(|v| v as u64);
         let vram_total = parts[4].trim().parse::<u64>().ok().filter(|v| *v > 0);
@@ -750,7 +753,7 @@ try {
     };
 
     let output = silent_command("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
         .output()
         .ok()?;
 

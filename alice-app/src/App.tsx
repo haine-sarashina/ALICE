@@ -57,56 +57,77 @@ export default function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  // アプリ状態の復元（起動時）
   useEffect(() => {
-    loadAppState().then(async (state) => {
-      const win = getCurrentWindow();
-      const dpi = await import("@tauri-apps/api/dpi");
-      // ウィンドウ位置・サイズ（不可視のまま復元）
-      if (state.windowWidth && state.windowHeight) {
-        try {
-          await win.setSize(new dpi.LogicalSize(state.windowWidth, state.windowHeight));
-        } catch {}
-      }
-      if (state.windowX != null && state.windowY != null) {
-        try {
-          await win.setPosition(new dpi.LogicalPosition(state.windowX, state.windowY));
-        } catch {}
-      }
-      // ペインサイズ
-      if (state.leftWidth) setLeftWidth(state.leftWidth);
-      if (state.rightWidth) setRightWidth(state.rightWidth);
-      if (state.consoleHeight) setConsoleHeight(state.consoleHeight);
-      // 展開されたフォルダ
-      if (state.expandedDirs?.length > 0) setRestoredExpandedDirs(state.expandedDirs);
-      // カーソル位置
-      if (state.cursorPositions) cursorPositionsRef.current = state.cursorPositions;
-      // 開いていたファイルを復元
-      if (state.openFiles?.length > 0) {
-        const tabs: EditorTab[] = [];
-        for (const path of state.openFiles) {
+    loadAppState()
+      .then(async (state) => {
+        const win = getCurrentWindow();
+        const dpi = await import("@tauri-apps/api/dpi");
+
+        // ウィンドウ位置・サイズ（不可視のまま復元）
+        if (state.windowWidth && state.windowHeight) {
           try {
-            const content = await invoke<string>("read_file", { path });
-            const name = path.split(/[\\/]/).pop() ?? path;
-            tabs.push({ id: `tab-${tabCounter++}`, path, name, content, modified: false });
-          } catch { /* ファイルがなければスキップ */ }
+            await win.setSize(new dpi.LogicalSize(state.windowWidth, state.windowHeight));
+          } catch {}
         }
-        if (tabs.length > 0) {
-          setEditorTabs(tabs);
-          const activeFile = state.activeFile;
-          const activeT = activeFile ? tabs.find(t => t.path === activeFile) : tabs[tabs.length - 1];
-          if (activeT) setActiveTabId(activeT.id);
+        if (state.windowX != null && state.windowY != null) {
+          try {
+            await win.setPosition(new dpi.LogicalPosition(state.windowX, state.windowY));
+          } catch {}
         }
-      }
-      // 復元完了後にウィンドウを表示
-      await win.show();
-    }).catch(async () => {
-      // 復元失敗時もウィンドウを表示
-      try { await getCurrentWindow().show(); } catch {}
-    });
+        // ペインサイズ
+        if (state.leftWidth) setLeftWidth(state.leftWidth);
+        if (state.rightWidth) setRightWidth(state.rightWidth);
+        if (state.consoleHeight) setConsoleHeight(state.consoleHeight);
+        // 展開されたフォルダ
+        if (state.expandedDirs?.length > 0) setRestoredExpandedDirs(state.expandedDirs);
+        // カーソル位置
+        if (state.cursorPositions) cursorPositionsRef.current = state.cursorPositions;
+        // 開いていたファイルを復元
+        if (state.openFiles?.length > 0) {
+          const tabs: EditorTab[] = [];
+          for (const path of state.openFiles) {
+            try {
+              const content = await invoke<string>("read_file", { path });
+              const name = path.split(/[\\/]/).pop() ?? path;
+              tabs.push({ id: `tab-${tabCounter++}`, path, name, content, modified: false });
+            } catch { /* ファイルがなければスキップ */ }
+          }
+          if (tabs.length > 0) {
+            setEditorTabs(tabs);
+            const activeFile = state.activeFile;
+            const activeT = activeFile ? tabs.find(t => t.path === activeFile) : tabs[tabs.length - 1];
+            if (activeT) setActiveTabId(activeT.id);
+          }
+        }
+        // 復元完了後にウィンドウを表示
+        await win.show();
+
+        // F11 キーでフルスクリーン切替
+        const handleKey = async (e: KeyboardEvent) => {
+          if (e.key === "F11") {
+            e.preventDefault();
+            try {
+              const win = getCurrentWindow();
+              const isFullscreen = await win.isFullscreen();
+              if (isFullscreen) {
+                await win.setAlwaysOnTop(false);
+                await win.setFullscreen(false);
+              } else {
+                await win.setAlwaysOnTop(true);
+                await win.setFullscreen(true);
+              }
+            } catch {}
+          }
+        };
+        window.addEventListener("keydown", handleKey);
+      })
+      .catch(() => {
+        // 復元失敗時もウィンドウを表示
+        getCurrentWindow().show().catch(() => {});
+      });
   }, []);
 
-  // アプリ状態の保存
+
   const saveStateRef = useRef<() => Promise<void>>(async () => {});
   saveStateRef.current = async () => {
     try {

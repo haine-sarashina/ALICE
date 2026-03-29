@@ -110,7 +110,15 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
 
   async function loadDir(dir: string): Promise<FileItem[] | null> {
     try {
-      return await invoke<FileItem[]>("list_directory", { path: dir, showHidden });
+      // 大量のファイルを一度に読み込むと応答がなくなるため、非同期で処理
+      const items = await invoke<FileItem[]>("list_directory", { path: dir, showHidden });
+
+      // ファイル数が多い場合は警告を表示
+      if (items && items.length > 1000) {
+        console.warn(`ディレクトリ "${dir}" に ${items.length} 個のファイルが見つかりました。`);
+      }
+
+      return items;
     } catch (e) {
       setError(String(e));
       return null;

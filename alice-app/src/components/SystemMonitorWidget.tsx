@@ -99,7 +99,7 @@ export default function SystemMonitorWidget() {
           {stats.vramUsedMb !== null && stats.vramTotalMb !== null && (
             <Row
               label="VRAM"
-              value={`${stats.vramUsedMb} / ${stats.vramTotalMb} MB`}
+              value={stats.vramTotalMb >= 1024 ? `${(stats.vramUsedMb/1024).toFixed(1)} / ${(stats.vramTotalMb/1024).toFixed(1)} GB` : `${stats.vramUsedMb} / ${stats.vramTotalMb} MB`}
               bar={(stats.vramUsedMb / stats.vramTotalMb) * 100}
               color={usageColor((stats.vramUsedMb / stats.vramTotalMb) * 100)}
             />
