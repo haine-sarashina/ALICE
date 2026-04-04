@@ -17,6 +17,8 @@ pub struct AppSettings {
     files: FileSettings,
     #[serde(default)]
     last_open_dir: Option<String>,
+    #[serde(default)]
+    recent_dirs: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -73,6 +75,7 @@ impl Default for AppSettings {
                     WidgetItem { id: "news".into(), visible: true },
                     WidgetItem { id: "systemMonitor".into(), visible: true },
                     WidgetItem { id: "claudeCode".into(), visible: true },
+                    WidgetItem { id: "battery".into(), visible: true },
                     WidgetItem { id: "info".into(), visible: true },
                 ],
                 photo_folder: None,
@@ -82,6 +85,7 @@ impl Default for AppSettings {
             },
             files: FileSettings::default(),
             last_open_dir: None,
+            recent_dirs: Vec::new(),
         }
     }
 }
@@ -153,6 +157,19 @@ pub struct AppWindowState {
     active_file: Option<String>,
     #[serde(default)]
     cursor_positions: HashMap<String, CursorPos>,
+    #[serde(default)]
+    dir_tab_states: HashMap<String, DirTabState>,
+    #[serde(default)]
+    is_maximized: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DirTabState {
+    #[serde(default)]
+    open_files: Vec<String>,
+    #[serde(default)]
+    active_file: Option<String>,
 }
 
 #[tauri::command]
@@ -281,6 +298,119 @@ fn delete_path(path: &str) -> Result<(), String> {
     } else {
         fs::remove_file(p).map_err(|e| e.to_string())
     }
+}
+
+// ─── Grep 検索 ───
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GrepMatch {
+    path: String,
+    line_number: usize,
+    line: String,
+}
+
+#[tauri::command]
+fn grep_files(dir: &str, query: &str) -> Result<Vec<GrepMatch>, String> {
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+    grep_recursive(Path::new(dir), &query_lower, &mut results);
+    // 最大500件
+    results.truncate(500);
+    Ok(results)
+}
+
+fn grep_recursive(dir: &Path, query: &str, results: &mut Vec<GrepMatch>) {
+    use std::io::{BufRead, BufReader};
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        if results.len() >= 500 {
+            return;
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // 隠しファイル・ディレクトリをスキップ
+        if name.starts_with('.') {
+            continue;
+        }
+        // node_modules, target 等をスキップ
+        if name == "node_modules" || name == "target" || name == "dist" || name == ".git" {
+            continue;
+        }
+
+        if path.is_dir() {
+            grep_recursive(&path, query, results);
+        } else {
+            // バイナリファイルをスキップ（拡張子で判断）
+            let ext = path.extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let binary_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "avif",
+                              "ico", "exe", "dll", "so", "dylib", "zip", "tar", "gz",
+                              "7z", "rar", "pdf", "woff", "woff2", "ttf", "eot",
+                              "mp3", "mp4", "avi", "mov", "wav", "ogg", "flac",
+                              "lock"];
+            if binary_exts.contains(&ext.as_str()) {
+                continue;
+            }
+
+            if let Ok(file) = std::fs::File::open(&path) {
+                let reader = BufReader::new(file);
+                for (i, line) in reader.lines().enumerate() {
+                    if results.len() >= 500 {
+                        return;
+                    }
+                    if let Ok(line) = line {
+                        if line.to_lowercase().contains(query) {
+                            results.push(GrepMatch {
+                                path: path.to_string_lossy().to_string(),
+                                line_number: i + 1,
+                                line: if line.len() > 500 { format!("{}...", &line[..500]) } else { line },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn list_directories_only(path: &str) -> Result<Vec<FileItem>, String> {
+    let entries = fs::read_dir(path).map_err(|e| e.to_string())?;
+    let mut dirs: Vec<FileItem> = entries
+        .filter_map(|e| e.ok())
+        .filter(|entry| {
+            let ft = entry.file_type().ok();
+            let is_dir = ft.map(|f| f.is_dir()).unwrap_or(false);
+            if !is_dir { return false; }
+            let name = entry.file_name().to_string_lossy().to_string();
+            // 隠しフォルダ・特殊フォルダをスキップ
+            !name.starts_with('.') && name != "node_modules" && name != "target" && name != "dist"
+        })
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = entry.path().to_string_lossy().to_string();
+            FileItem {
+                name,
+                path,
+                is_dir: true,
+                accessible: entry.path().read_dir().is_ok(),
+            }
+        })
+        .collect();
+    dirs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(dirs)
 }
 
 // ─── 写真ウィジェット ───
@@ -606,6 +736,55 @@ fn get_system_stats(
         gpu_name: gpu.name.clone(),
         npu_usage: gpu.npu_usage,
     }
+}
+
+// ─── バッテリー ───
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatteryInfo {
+    present: bool,
+    percent: f32,
+    is_charging: bool,
+    time_remaining_minutes: Option<u32>,
+}
+
+#[tauri::command]
+fn get_battery_info() -> BatteryInfo {
+    let absent = BatteryInfo { present: false, percent: 0.0, is_charging: false, time_remaining_minutes: None };
+
+    let ps = r#"
+$b = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
+if ($null -eq $b) { Write-Output "none"; exit }
+$pct = [int]$b.EstimatedChargeRemaining
+$status = [int]$b.BatteryStatus
+$isCharging = ($status -eq 6 -or $status -eq 7 -or $status -eq 8 -or $status -eq 9 -or $status -eq 10)
+$runtime = [int]$b.EstimatedRunTime
+if ($null -eq $b.EstimatedRunTime -or $runtime -le 0 -or $runtime -ge 71582788) { $runtime = -1 }
+Write-Output "$pct|$isCharging|$runtime"
+"#;
+
+    let output = match silent_command("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps])
+        .output() {
+        Ok(o) => o,
+        Err(_) => return absent,
+    };
+
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if s == "none" || s.is_empty() {
+        return absent;
+    }
+    let parts: Vec<&str> = s.split('|').collect();
+    if parts.len() < 3 {
+        return absent;
+    }
+    let percent = parts[0].trim().parse::<f32>().unwrap_or(0.0);
+    let is_charging = parts[1].trim().to_lowercase() == "true";
+    let runtime = parts[2].trim().parse::<i64>().unwrap_or(-1);
+    let time_remaining_minutes = if runtime > 0 { Some(runtime as u32) } else { None };
+
+    BatteryInfo { present: true, percent, is_charging, time_remaining_minutes }
 }
 
 struct GpuStats {
@@ -1018,6 +1197,9 @@ pub fn run() {
             git_has_unpushed,
             lm_chat,
             get_claude_usage,
+            grep_files,
+            list_directories_only,
+            get_battery_info,
         ])
         .on_window_event(|window, event| {
             // メインウィンドウが閉じられたらアプリ全体を終了

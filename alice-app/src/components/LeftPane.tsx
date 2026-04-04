@@ -11,20 +11,37 @@ interface FileItem {
   accessible: boolean;
 }
 
+interface GrepMatch {
+  path: string;
+  lineNumber: number;
+  line: string;
+}
+
+interface DirItem {
+  name: string;
+  path: string;
+  isDir: boolean;
+  accessible: boolean;
+}
+
 interface LeftPaneProps {
   onFileOpen: (path: string, content: string) => void;
   onDiffOpen?: (path: string, content: string) => void;
+  onGrepResult?: (query: string, content: string, baseDir?: string) => void;
   selectedFilePath?: string | null;
   initialDir?: string;
   onDirChange?: (dir: string) => void;
   showHidden?: boolean;
   initialExpandedDirs?: string[];
   onExpandedDirsChange?: (dirs: string[]) => void;
+  onReady?: () => void;
+  recentDirs?: string[];
+  onOpenRecentDir?: (dir: string) => void;
 }
 
 const IS_MAC = navigator.platform.startsWith("Mac");
 
-export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, initialDir, onDirChange, showHidden = false, initialExpandedDirs, onExpandedDirsChange }: LeftPaneProps) {
+export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selectedFilePath, initialDir, onDirChange, showHidden = false, initialExpandedDirs, onExpandedDirsChange, onReady, recentDirs, onOpenRecentDir }: LeftPaneProps) {
   const [activeTab, setActiveTab] = useState<"files" | "git" | "search">("files");
   const [currentDir, setCurrentDir] = useState<string>("");
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -32,6 +49,11 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showRecentMenu, setShowRecentMenu] = useState(false);
+  const [grepSearching, setGrepSearching] = useState(false);
+  const [searchScopeDir, setSearchScopeDir] = useState<string | null>(null);
+  const [searchDirTree, setSearchDirTree] = useState<Map<string, DirItem[]>>(new Map());
+  const [searchExpandedDirs, setSearchExpandedDirs] = useState<Set<string>>(new Set());
 
   // リネーム
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -45,18 +67,32 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
 
   // 初期ディレクトリの復元
   const dirInitializedRef = useRef(false);
+  const readyCalledRef = useRef(false);
   useEffect(() => {
     if (initialDir && !currentDir && !dirInitializedRef.current) {
       dirInitializedRef.current = true;
       openDir(initialDir);
+    }
+    // initialDir が無い場合は即 ready
+    if (!initialDir && !readyCalledRef.current) {
+      readyCalledRef.current = true;
+      onReady?.();
     }
   }, [initialDir]);
 
   // 展開されたフォルダの復元（currentDir設定後に実行）
   const expandedDirsRestoredRef = useRef(false);
   useEffect(() => {
-    if (!currentDir || !initialExpandedDirs || initialExpandedDirs.length === 0) return;
+    if (!currentDir) return;
     if (expandedDirsRestoredRef.current) return;
+    // 展開ディレクトリが無い場合は openDir 完了で ready
+    if (!initialExpandedDirs || initialExpandedDirs.length === 0) {
+      if (!readyCalledRef.current) {
+        readyCalledRef.current = true;
+        onReady?.();
+      }
+      return;
+    }
     expandedDirsRestoredRef.current = true;
 
     (async () => {
@@ -77,6 +113,11 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
           for (const dir of initialExpandedDirs) next.add(dir);
           return next;
         });
+      }
+      // 展開ディレクトリ復元完了 → ready
+      if (!readyCalledRef.current) {
+        readyCalledRef.current = true;
+        onReady?.();
       }
     })();
   }, [currentDir, initialExpandedDirs]);
@@ -278,11 +319,11 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
 
   // グローバルクリックでメニューを閉じる
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    if (!contextMenu && !showRecentMenu) return;
+    const close = () => { setContextMenu(null); setShowRecentMenu(false); };
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
-  }, [contextMenu]);
+  }, [contextMenu, showRecentMenu]);
 
   async function handleDelete(item: FileItem) {
     setContextMenu(null);
@@ -484,11 +525,95 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
     return currentDir;
   }
 
-  // 検索: ルート直下のファイルのみフラット検索
+  // 検索タブ: フォルダツリー読み込み
+  useEffect(() => {
+    if (activeTab === "search" && currentDir && !searchDirTree.has(currentDir)) {
+      invoke<DirItem[]>("list_directories_only", { path: currentDir }).then(dirs => {
+        setSearchDirTree(prev => new Map(prev).set(currentDir, dirs));
+      }).catch(() => {});
+    }
+  }, [activeTab, currentDir]);
+
+  async function toggleSearchDir(path: string) {
+    if (searchExpandedDirs.has(path)) {
+      setSearchExpandedDirs(prev => { const n = new Set(prev); n.delete(path); return n; });
+    } else {
+      if (!searchDirTree.has(path)) {
+        try {
+          const dirs = await invoke<DirItem[]>("list_directories_only", { path });
+          setSearchDirTree(prev => new Map(prev).set(path, dirs));
+        } catch { return; }
+      }
+      setSearchExpandedDirs(prev => new Set(prev).add(path));
+    }
+  }
+
+  function selectSearchScope(path: string | null) {
+    setSearchScopeDir(prev => prev === path ? null : path);
+  }
+
+  async function handleGrep() {
+    if (!searchQuery.trim() || !currentDir) return;
+    const dir = searchScopeDir ?? currentDir;
+    setGrepSearching(true);
+    try {
+      const matches = await invoke<GrepMatch[]>("grep_files", { dir, query: searchQuery.trim() });
+      // 結果をテキストとして整形
+      const lines: string[] = [];
+      const dirPrefix = currentDir.replace(/\\/g, "/");
+      let currentFile = "";
+      for (const m of matches) {
+        const relPath = m.path.replace(/\\/g, "/").replace(dirPrefix + "/", "");
+        if (relPath !== currentFile) {
+          if (currentFile) lines.push("");
+          currentFile = relPath;
+          lines.push(`── ${relPath} ──`);
+        }
+        lines.push(`  ${m.lineNumber}: ${m.line}`);
+      }
+      if (matches.length === 0) {
+        lines.push("検索結果はありません。");
+      } else if (matches.length >= 500) {
+        lines.push("");
+        lines.push("（結果が500件を超えたため省略されました）");
+      }
+      onGrepResult?.(searchQuery.trim(), lines.join("\n"), currentDir);
+    } catch (e) {
+      setError(String(e));
+    }
+    setGrepSearching(false);
+  }
+
+  function renderSearchDirTree(parentPath: string, depth: number): React.ReactNode[] {
+    const dirs = searchDirTree.get(parentPath);
+    if (!dirs) return [];
+    return dirs.map(dir => {
+      const isExpanded = searchExpandedDirs.has(dir.path);
+      const isSelected = searchScopeDir === dir.path;
+      return (
+        <li key={dir.path} className="tree-group">
+          <div
+            className={`file-item dir ${isSelected ? "selected" : ""}`}
+            style={{ paddingLeft: `${8 + depth * 16}px` }}
+            onClick={() => { selectSearchScope(dir.path); toggleSearchDir(dir.path); }}
+          >
+            <span className="tree-arrow">
+              {isExpanded ? "▾" : "▸"}
+            </span>
+            <FileIcon isDir={true} accessible={dir.accessible} name={dir.name} />
+            <span className="file-name">{dir.name}</span>
+          </div>
+          {isExpanded && (
+            <ul className="tree-children">
+              {renderSearchDirTree(dir.path, depth + 1)}
+            </ul>
+          )}
+        </li>
+      );
+    });
+  }
+
   const rootItems = currentDir ? (dirContents.get(currentDir) ?? []) : [];
-  const filteredFiles = searchQuery
-    ? rootItems.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-    : rootItems;
 
   // 空状態: フォルダ未選択
   if (!currentDir) {
@@ -530,15 +655,42 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
         {activeTab === "files" && (
           <div className="file-list" ref={fileListRef} onDragOver={handleListDragOver} onDrop={handleListDrop}>
             <div className="dir-header">
-              <button className="btn-small" onClick={openDirectory} title="別のフォルダを開く">
-                開く
-              </button>
-              <button className="btn-small" onClick={() => startCreate(getSelectedDir(), "file")} title="新規ファイル">
-                +F
-              </button>
-              <button className="btn-small" onClick={() => startCreate(getSelectedDir(), "folder")} title="新規フォルダ">
-                +D
-              </button>
+              <div className="dir-header-btns">
+                <button className="btn-small" onClick={openDirectory} title="別のフォルダを開く">
+                  📁
+                </button>
+                {recentDirs && recentDirs.length > 0 && (
+                  <div className="recent-dir-wrapper">
+                    <button className="btn-small" onClick={(e) => { e.stopPropagation(); setShowRecentMenu(v => !v); }} title="最近のフォルダ">
+                      🕐
+                    </button>
+                    {showRecentMenu && (
+                      <div className="recent-dir-menu">
+                        {recentDirs.map((dir) => (
+                          <button
+                            key={dir}
+                            className="context-menu-item"
+                            title={dir}
+                            onClick={() => {
+                              setShowRecentMenu(false);
+                              openDir(dir);
+                              onOpenRecentDir?.(dir);
+                            }}
+                          >
+                            {dir.split(/[\\/]/).pop()}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button className="btn-small" onClick={() => startCreate(getSelectedDir(), "file")} title="新規ファイル">
+                  +F
+                </button>
+                <button className="btn-small" onClick={() => startCreate(getSelectedDir(), "folder")} title="新規フォルダ">
+                  +D
+                </button>
+              </div>
               <span className="dir-path" title={currentDir}>
                 {currentDir.split(/[\\/]/).pop()}
               </span>
@@ -574,23 +726,41 @@ export default function LeftPane({ onFileOpen, onDiffOpen, selectedFilePath, ini
 
         {activeTab === "search" && (
           <div className="search-panel">
-            <input
-              className="search-input"
-              placeholder="ファイル名で検索..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <ul className="file-items">
-              {filteredFiles.map((file) => (
-                <li
-                  key={file.path}
-                  className={`file-item ${file.isDir ? "dir" : "file"} ${!file.isDir && file.path === selectedFilePath ? "selected" : ""}`}
-                  onClick={() => handleFileClick(file)}
+            <div className="search-header">
+              <input
+                className="search-input"
+                placeholder="Grep 検索..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleGrep(); }}
+              />
+              <button
+                className="btn-small"
+                onClick={handleGrep}
+                disabled={grepSearching || !searchQuery.trim()}
+              >
+                {grepSearching ? "検索中..." : "検索"}
+              </button>
+            </div>
+            {searchScopeDir && (
+              <div className="search-scope-info">
+                検索対象: {searchScopeDir.split(/[\\/]/).pop()}
+                <button className="btn-clear-scope" onClick={() => setSearchScopeDir(null)} title="解除">✕</button>
+              </div>
+            )}
+            <div className="search-dir-label">フォルダを選択して検索範囲を絞り込み:</div>
+            <ul className="file-items tree-root search-dir-tree">
+              <li className="tree-group">
+                <div
+                  className={`file-item dir ${searchScopeDir === null ? "selected" : ""}`}
+                  style={{ paddingLeft: "8px" }}
+                  onClick={() => selectSearchScope(null)}
                 >
-                  <FileIcon isDir={file.isDir} accessible={file.accessible} name={file.name} />
-                  <span className="file-name">{file.name}</span>
-                </li>
-              ))}
+                  <FileIcon isDir={true} accessible={true} name={currentDir.split(/[\\/]/).pop() ?? ""} />
+                  <span className="file-name">{currentDir.split(/[\\/]/).pop()} (全体)</span>
+                </div>
+              </li>
+              {renderSearchDirTree(currentDir, 1)}
             </ul>
           </div>
         )}

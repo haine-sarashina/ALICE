@@ -5,36 +5,10 @@ import SystemMonitorWidget from "./SystemMonitorWidget";
 import PhotoWidget from "./PhotoWidget";
 import NewsWidget from "./NewsWidget";
 import ClaudeCodeWidget from "./ClaudeCodeWidget";
+import ClockWidget from "./ClockWidget";
+import InfoWidget from "./InfoWidget";
+import BatteryWidget from "./BatteryWidget";
 import type { WidgetItem, AppSettings } from "../lib/settings";
-
-function ClockWidget() {
-  const [time, setTime] = React.useState(new Date());
-  React.useEffect(() => {
-    const id = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <div className="widget clock-widget">
-      <h3>時刻</h3>
-      <div className="clock-time">{time.toLocaleTimeString("ja-JP")}</div>
-      <div className="clock-date">{time.toLocaleDateString("ja-JP", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</div>
-    </div>
-  );
-}
-
-function InfoWidget() {
-  return (
-    <div className="widget info-widget">
-      <h3>ALICE について</h3>
-      <ul>
-        <li>AI Local Interface for Code Editor</li>
-        <li>Tauri v2 + React</li>
-        <li>LM Studio 連携</li>
-        <li>4 ペインレイアウト</li>
-      </ul>
-    </div>
-  );
-}
 
 interface RightPaneProps {
   widgetItems?: WidgetItem[];
@@ -82,6 +56,7 @@ export default function RightPane({ widgetItems, settings, onPhotoClick, onNewsC
     );
     case "systemMonitor": return <SystemMonitorWidget />;
     case "claudeCode": return <ClaudeCodeWidget />;
+    case "battery": return <BatteryWidget />;
     case "info": return <InfoWidget />;
     default: return null;
   }

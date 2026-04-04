@@ -7,8 +7,12 @@ export interface EditorTab {
   name: string;
   content: string;
   modified: boolean;
-  /** "text" = コードエディタ, "image" = 画像表示, "browser" = Web表示, "diff" = Diff表示 */
-  type?: "text" | "image" | "browser" | "diff";
+  /** "text" = コードエディタ, "image" = 画像表示, "browser" = Web表示, "diff" = Diff表示, "search" = 検索結果 */
+  type?: "text" | "image" | "browser" | "diff" | "search";
+  /** 検索結果タブ用: 検索クエリ */
+  searchQuery?: string;
+  /** 検索結果タブ用: ベースディレクトリ（相対パス解決用） */
+  searchBaseDir?: string;
   /** image/browser タブ用 URL */
   url?: string;
 }
@@ -30,6 +34,7 @@ interface EditorPaneProps {
   autoSave?: boolean;
   onCursorChange?: (id: string, start: number, end: number) => void;
   cursorPositions?: Record<string, CursorPos>;
+  onFileOpen?: (path: string, content: string) => void;
 }
 
 export default function EditorPane({
@@ -44,6 +49,7 @@ export default function EditorPane({
   autoSave = false,
   onCursorChange,
   cursorPositions,
+  onFileOpen,
 }: EditorPaneProps) {
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -70,16 +76,25 @@ export default function EditorPane({
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const tabType = activeTab?.type || "text";
+  const isMarkdown = tabType === "text" && (activeTab?.name?.endsWith(".md") || activeTab?.name?.endsWith(".markdown"));
+  const highlightRef = useRef<HTMLPreElement>(null);
 
-  // 行番号とテキストエリアのスクロールを同期
+  // 行番号とテキストエリアのスクロールを同期（+ マークダウンハイライト同期）
   useEffect(() => {
     const ta = textareaRef.current;
     const ln = lineNumberRef.current;
+    const hl = highlightRef.current;
     if (!ta || !ln) return;
-    const sync = () => { ln.scrollTop = ta.scrollTop; };
+    const sync = () => {
+      ln.scrollTop = ta.scrollTop;
+      if (hl) {
+        hl.scrollTop = ta.scrollTop;
+        hl.scrollLeft = ta.scrollLeft;
+      }
+    };
     ta.addEventListener("scroll", sync);
     return () => ta.removeEventListener("scroll", sync);
-  }, [activeTabId]);
+  }, [activeTabId, isMarkdown]);
 
   // カーソル位置の復元
   const restoredTabsRef = useRef<Set<string>>(new Set());
@@ -218,7 +233,7 @@ export default function EditorPane({
           >
             <span className="tab-label">
               {tab.modified ? "● " : ""}
-              {tab.type === "image" ? "🖼 " : tab.type === "browser" ? "🌐 " : tab.type === "diff" ? "±" : ""}
+              {tab.type === "image" ? "🖼 " : tab.type === "browser" ? "🌐 " : tab.type === "diff" ? "±" : tab.type === "search" ? "🔍 " : ""}
               {tab.name}
             </span>
             <button
@@ -268,6 +283,13 @@ export default function EditorPane({
         </div>
       )}
 
+      {tabType === "search" && activeTab && (
+        <div className="editor-toolbar">
+          <span className="file-path-display">{activeTab.name}</span>
+          <span className="editor-stats">クリックでファイルを開く</span>
+        </div>
+      )}
+
       {tabType === "image" && activeTab && (
         <div className="editor-toolbar">
           <span className="file-path-display">{activeTab.name}</span>
@@ -294,16 +316,27 @@ export default function EditorPane({
             <div className="line-numbers" ref={lineNumberRef} style={{ fontSize: `${fontSize}px` }}>
               <pre>{lineNumbers}</pre>
             </div>
-            <textarea
-              ref={textareaRef}
-              className="code-editor"
-              value={activeTab.content}
-              onChange={(e) => onContentChange(activeTab.id, e.target.value)}
-              onKeyDown={handleKeyDown}
-              onSelect={handleSelect}
-              spellCheck={false}
-              style={{ fontSize: `${fontSize}px` }}
-            />
+            <div className="editor-area">
+              {isMarkdown && (
+                <pre
+                  ref={highlightRef}
+                  className="md-highlight-overlay"
+                  style={{ fontSize: `${fontSize}px` }}
+                  aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: markdownHighlight(activeTab.content) }}
+                />
+              )}
+              <textarea
+                ref={textareaRef}
+                className={`code-editor ${isMarkdown ? "md-editor-transparent" : ""}`}
+                value={activeTab.content}
+                onChange={(e) => onContentChange(activeTab.id, e.target.value)}
+                onKeyDown={handleKeyDown}
+                onSelect={handleSelect}
+                spellCheck={false}
+                style={{ fontSize: `${fontSize}px` }}
+              />
+            </div>
           </div>
         )}
 
@@ -375,7 +408,124 @@ export default function EditorPane({
             </pre>
           </div>
         )}
+
+        {activeTab && tabType === "search" && (
+          <div className="search-result-viewer">
+            <pre className="search-result-content">
+              {activeTab.content.split("\n").map((line, i) => {
+                const query = activeTab.searchQuery ?? "";
+                // ファイルヘッダー行: ── path ──
+                if (line.startsWith("── ") && line.endsWith(" ──")) {
+                  return <div key={i} className="search-line search-file-header">{line}</div>;
+                }
+                // 結果行: "  行番号: 内容" → クリック可能 + クエリ文字列をハイライト
+                const matchResult = line.match(/^  (\d+): (.*)$/);
+                if (matchResult && query) {
+                  const lineNum = matchResult[1];
+                  const lineContent = matchResult[2];
+                  return (
+                    <div
+                      key={i}
+                      className="search-line search-match-line"
+                      onClick={() => handleSearchLineClick(activeTab, i)}
+                    >
+                      <span className="search-line-num">{lineNum}: </span>
+                      {highlightQuery(lineContent, query)}
+                    </div>
+                  );
+                }
+                // その他の行（空行、メッセージなど）
+                return <div key={i} className="search-line">{line}</div>;
+              })}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );
+
+  function markdownHighlight(text: string): string {
+    return text.split("\n").map(line => {
+      // HTMLエスケープ
+      let escaped = line
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      // 見出し: # ~ ######
+      if (/^#{1,6}\s/.test(escaped)) {
+        return `<span class="md-heading">${escaped}</span>`;
+      }
+      // コードブロック開始/終了: ```
+      if (/^```/.test(escaped)) {
+        return `<span class="md-code-fence">${escaped}</span>`;
+      }
+      // 水平線: --- / *** / ___
+      if (/^(\s*[-*_]){3,}\s*$/.test(escaped)) {
+        return `<span class="md-hr">${escaped}</span>`;
+      }
+      // 引用: >
+      if (/^&gt;\s?/.test(escaped)) {
+        return `<span class="md-blockquote">${escaped}</span>`;
+      }
+      // リスト: - / * / + / 数字.
+      if (/^\s*([-*+]|\d+\.)\s/.test(escaped)) {
+        escaped = escaped.replace(/^(\s*)([-*+]|\d+\.)/, '$1<span class="md-list-marker">$2</span>');
+      }
+      // チェックボックス: - [x] / - [ ]
+      escaped = escaped.replace(/\[(x|X)\]/g, '<span class="md-checkbox-checked">[x]</span>');
+      escaped = escaped.replace(/\[ \]/g, '<span class="md-checkbox">[ ]</span>');
+      // 太字: **text** / __text__
+      escaped = escaped.replace(/(\*\*|__)(.+?)\1/g, '<span class="md-bold">$1$2$1</span>');
+      // 斜体: *text* / _text_
+      escaped = escaped.replace(/(\*|_)(.+?)\1/g, '<span class="md-italic">$1$2$1</span>');
+      // インラインコード: `code`
+      escaped = escaped.replace(/`([^`]+)`/g, '<span class="md-inline-code">`$1`</span>');
+      // リンク: [text](url)
+      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="md-link">[$1]($2)</span>');
+      // 画像: ![alt](url)
+      escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<span class="md-image">![$1]($2)</span>');
+
+      return escaped;
+    }).join("\n");
+  }
+
+  function highlightQuery(text: string, query: string): React.ReactNode {
+    if (!query) return text;
+    const parts: React.ReactNode[] = [];
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    let lastIndex = 0;
+    let idx = lowerText.indexOf(lowerQuery, lastIndex);
+    while (idx !== -1) {
+      if (idx > lastIndex) parts.push(text.substring(lastIndex, idx));
+      parts.push(<span key={idx} className="search-highlight">{text.substring(idx, idx + query.length)}</span>);
+      lastIndex = idx + query.length;
+      idx = lowerText.indexOf(lowerQuery, lastIndex);
+    }
+    if (lastIndex < text.length) parts.push(text.substring(lastIndex));
+    return <>{parts}</>;
+  }
+
+  async function handleSearchLineClick(tab: EditorTab, lineIndex: number) {
+    if (!onFileOpen) return;
+    // 行からファイルパスを逆引き: 上方向に最も近い "── path ──" 行を探す
+    const lines = tab.content.split("\n");
+    let relPath = "";
+    for (let j = lineIndex; j >= 0; j--) {
+      const m = lines[j].match(/^── (.+) ──$/);
+      if (m) { relPath = m[1]; break; }
+    }
+    if (!relPath) return;
+
+    // 相対パスを絶対パスに変換
+    const baseDir = tab.searchBaseDir;
+    const sep = baseDir?.includes("\\") ? "\\" : "/";
+    const absPath = baseDir ? baseDir + sep + relPath.replace(/\//g, sep) : relPath;
+
+    try {
+      const content = await invoke<string>("read_file", { path: absPath });
+      onFileOpen(absPath, content);
+    } catch { /* ファイルが開けない場合は無視 */ }
+  }
 }

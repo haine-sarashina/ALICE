@@ -8,6 +8,7 @@ import {
   type AppSettings,
   type AppWindowState,
   type CursorPos,
+  type DirTabState,
   DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
@@ -26,6 +27,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [restoredExpandedDirs, setRestoredExpandedDirs] = useState<string[]>([]);
+  const [appStateReady, setAppStateReady] = useState(false);
 
   const [leftWidth, setLeftWidth] = useState(220);
   const [rightWidth, setRightWidth] = useState(220);
@@ -44,6 +46,8 @@ export default function App() {
   const cursorPositionsRef = useRef<Record<string, CursorPos>>({});
   // 展開ディレクトリの追跡
   const expandedDirsRef = useRef<string[]>([]);
+  // フォルダごとのタブ状態
+  const dirTabStatesRef = useRef<Record<string, DirTabState>>({});
 
   // 設定読み込み（起動時 + ウィンドウフォーカス時に再読み込み）
   function reloadSettings() {
@@ -64,15 +68,19 @@ export default function App() {
         const dpi = await import("@tauri-apps/api/dpi");
 
         // ウィンドウ位置・サイズ（不可視のまま復元）
-        if (state.windowWidth && state.windowHeight) {
-          try {
-            await win.setSize(new dpi.LogicalSize(state.windowWidth, state.windowHeight));
-          } catch {}
-        }
-        if (state.windowX != null && state.windowY != null) {
-          try {
-            await win.setPosition(new dpi.LogicalPosition(state.windowX, state.windowY));
-          } catch {}
+        if (state.isMaximized) {
+          try { await win.maximize(); } catch {}
+        } else {
+          if (state.windowWidth && state.windowHeight) {
+            try {
+              await win.setSize(new dpi.LogicalSize(state.windowWidth, state.windowHeight));
+            } catch {}
+          }
+          if (state.windowX != null && state.windowY != null) {
+            try {
+              await win.setPosition(new dpi.LogicalPosition(state.windowX, state.windowY));
+            } catch {}
+          }
         }
         // ペインサイズ
         if (state.leftWidth) setLeftWidth(state.leftWidth);
@@ -82,6 +90,8 @@ export default function App() {
         if (state.expandedDirs?.length > 0) setRestoredExpandedDirs(state.expandedDirs);
         // カーソル位置
         if (state.cursorPositions) cursorPositionsRef.current = state.cursorPositions;
+        // フォルダごとのタブ状態
+        if (state.dirTabStates) dirTabStatesRef.current = state.dirTabStates;
         // 開いていたファイルを復元
         if (state.openFiles?.length > 0) {
           const tabs: EditorTab[] = [];
@@ -99,14 +109,29 @@ export default function App() {
             if (activeT) setActiveTabId(activeT.id);
           }
         }
-        // 復元完了後にウィンドウを表示
-        await win.show();
+        // ファイルツリー復元後に表示するため、ここではまだ show しない
+        setAppStateReady(true);
       })
       .catch(() => {
         // 復元失敗時もウィンドウを表示
+        setAppStateReady(true);
         getCurrentWindow().show().catch(() => {});
       });
   }, []);
+
+  // LeftPane のファイルツリー復元完了 → ウィンドウを表示
+  const windowShownRef = useRef(false);
+  const showWindow = useCallback(() => {
+    if (windowShownRef.current) return;
+    windowShownRef.current = true;
+    getCurrentWindow().show().catch(() => {});
+  }, []);
+  // appState 復元完了後、LeftPane の onReady またはタイムアウト(10秒)で表示
+  useEffect(() => {
+    if (!appStateReady) return;
+    const timeout = setTimeout(showWindow, 10000);
+    return () => clearTimeout(timeout);
+  }, [appStateReady]);
 
   // F11 キーでフルスクリーン切替
   useEffect(() => {
@@ -138,18 +163,21 @@ export default function App() {
       const size = await win.outerSize();
       const pos = await win.outerPosition();
       const factor = await win.scaleFactor();
+      const maximized = await win.isMaximized();
       const state: AppWindowState = {
-        windowX: Math.round(pos.x / factor),
-        windowY: Math.round(pos.y / factor),
-        windowWidth: Math.round(size.width / factor),
-        windowHeight: Math.round(size.height / factor),
+        windowX: maximized ? null : Math.round(pos.x / factor),
+        windowY: maximized ? null : Math.round(pos.y / factor),
+        windowWidth: maximized ? null : Math.round(size.width / factor),
+        windowHeight: maximized ? null : Math.round(size.height / factor),
+        isMaximized: maximized,
         leftWidth,
         rightWidth,
         consoleHeight,
         expandedDirs: expandedDirsRef.current,
-        openFiles: editorTabsRef.current.filter(t => t.path && t.type !== "browser" && t.type !== "image").map(t => t.path),
+        openFiles: editorTabsRef.current.filter(t => t.path && t.type !== "browser" && t.type !== "image" && t.type !== "search").map(t => t.path),
         activeFile: editorTabsRef.current.find(t => t.id === activeTabId)?.path ?? null,
         cursorPositions: cursorPositionsRef.current,
+        dirTabStates: dirTabStatesRef.current,
       };
       await saveAppState(state);
     } catch {}
@@ -290,13 +318,79 @@ export default function App() {
     );
   }
 
-  // ディレクトリ変更時に設定に保存
+  // ディレクトリ変更時に設定に保存 + エディタタブをすべて閉じる
   function handleDirChange(dir: string) {
     setSettings((prev) => {
-      const next = { ...prev, lastOpenDir: dir };
+      const oldDir = prev.lastOpenDir;
+      if (oldDir && oldDir !== dir) {
+        // 現在のタブ状態を保存
+        const currentTabs = editorTabsRef.current.filter(t => t.path && t.type !== "browser" && t.type !== "image" && t.type !== "search");
+        if (currentTabs.length > 0) {
+          dirTabStatesRef.current[oldDir] = {
+            openFiles: currentTabs.map(t => t.path),
+            activeFile: editorTabsRef.current.find(t => t.id === activeTabId)?.path ?? null,
+          };
+        }
+        // 別フォルダに変更 → タブをすべて閉じる
+        setEditorTabs([]);
+        setActiveTabId(null);
+        tabHistoryRef.current = [];
+        cursorPositionsRef.current = {};
+      }
+      // 最近のフォルダ履歴を更新（最大5件）
+      const recent = (prev.recentDirs ?? []).filter(d => d !== dir);
+      recent.unshift(dir);
+      const next = { ...prev, lastOpenDir: dir, recentDirs: recent.slice(0, 5) };
       saveSettings(next).catch(() => {});
       return next;
     });
+  }
+
+  // 最近のフォルダを開く（タブ復元付き）
+  async function handleOpenRecentDir(dir: string) {
+    // dirTabStates から前回のタブを復元
+    const saved = dirTabStatesRef.current[dir];
+    if (saved && saved.openFiles.length > 0) {
+      const tabs: EditorTab[] = [];
+      for (const path of saved.openFiles) {
+        try {
+          const content = await invoke<string>("read_file", { path });
+          const name = path.split(/[\\/]/).pop() ?? path;
+          tabs.push({ id: `tab-${tabCounter++}`, path, name, content, modified: false });
+        } catch { /* ファイルがなければスキップ */ }
+      }
+      if (tabs.length > 0) {
+        setEditorTabs(tabs);
+        const activeT = saved.activeFile ? tabs.find(t => t.path === saved.activeFile) : tabs[tabs.length - 1];
+        if (activeT) setActiveTabId(activeT.id);
+      }
+    }
+  }
+
+  // Grep検索結果をエディタタブで表示
+  function handleGrepResult(query: string, content: string, baseDir?: string) {
+    const tabName = `検索：${query}`;
+    // 既存の検索タブがあれば更新
+    const existing = editorTabsRef.current.find(t => t.type === "search");
+    if (existing) {
+      setEditorTabs(prev => prev.map(t =>
+        t.id === existing.id ? { ...t, name: tabName, content, modified: false, path: "", type: "search" as const, searchQuery: query, searchBaseDir: baseDir } : t
+      ));
+      selectTab(existing.id);
+    } else {
+      const newT: EditorTab = {
+        id: `tab-${tabCounter++}`,
+        path: "",
+        name: tabName,
+        content,
+        modified: false,
+        type: "search",
+        searchQuery: query,
+        searchBaseDir: baseDir,
+      };
+      setEditorTabs(prev => [...prev, newT]);
+      selectTab(newT.id);
+    }
   }
 
   // カーソル位置変更コールバック
@@ -354,6 +448,11 @@ export default function App() {
 
   const win = getCurrentWindow();
 
+  // 状態復元が完了するまでレンダリングを抑制（デフォルト画面のちらつき防止）
+  if (!appStateReady) {
+    return null;
+  }
+
   return (
     <div className="app-layout">
       <header className="app-header" data-tauri-drag-region>
@@ -377,12 +476,16 @@ export default function App() {
           <LeftPane
             onFileOpen={openFile}
             onDiffOpen={handleDiffOpen}
+            onGrepResult={handleGrepResult}
             selectedFilePath={activeFilePath}
             initialDir={settings.lastOpenDir ?? undefined}
             onDirChange={handleDirChange}
             showHidden={settings.files.showHidden}
             initialExpandedDirs={restoredExpandedDirs}
             onExpandedDirsChange={(dirs) => { expandedDirsRef.current = dirs; }}
+            onReady={showWindow}
+            recentDirs={settings.recentDirs}
+            onOpenRecentDir={handleOpenRecentDir}
           />
         </div>
         <div
@@ -402,6 +505,7 @@ export default function App() {
             autoSave={settings.editor.autoSave}
             onCursorChange={handleCursorChange}
             cursorPositions={cursorPositionsRef.current}
+            onFileOpen={openFile}
           />
           <div
             className="resize-handle resize-handle-row"

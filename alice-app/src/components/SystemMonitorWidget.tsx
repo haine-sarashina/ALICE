@@ -46,9 +46,26 @@ export default function SystemMonitorWidget() {
   async function refresh() {
     try {
       const s = await invoke<SystemStats>("get_system_stats");
-      setStats(s);
+      setStats(prev => {
+        if (!prev) return s;
+        // 取得できなかった項目は前回の値を保持
+        return {
+          cpuUsage: s.cpuUsage,
+          memoryUsedMb: s.memoryUsedMb,
+          memoryTotalMb: s.memoryTotalMb,
+          memoryUsage: s.memoryUsage,
+          cpuTemp: s.cpuTemp ?? prev.cpuTemp,
+          gpuUsage: s.gpuUsage ?? prev.gpuUsage,
+          gpuTemp: s.gpuTemp ?? prev.gpuTemp,
+          vramUsedMb: s.vramUsedMb ?? prev.vramUsedMb,
+          vramTotalMb: s.vramTotalMb ?? prev.vramTotalMb,
+          gpuName: s.gpuName ?? prev.gpuName,
+          npuUsage: s.npuUsage ?? prev.npuUsage,
+        };
+      });
       setError(null);
     } catch (e) {
+      // エラー時も前回の値を保持（stats は更新しない）
       setError(String(e));
     }
   }
@@ -104,14 +121,12 @@ export default function SystemMonitorWidget() {
               color={usageColor((stats.vramUsedMb / stats.vramTotalMb) * 100)}
             />
           )}
-          {stats.npuUsage !== null && (
-            <Row
-              label="NPU"
-              value={`${stats.npuUsage.toFixed(1)}%`}
-              bar={stats.npuUsage}
-              color={usageColor(stats.npuUsage)}
-            />
-          )}
+          <Row
+            label="NPU"
+            value={`${(stats.npuUsage ?? 0).toFixed(1)}%`}
+            bar={stats.npuUsage ?? 0}
+            color={usageColor(stats.npuUsage ?? 0)}
+          />
           {stats.gpuUsage === null && (
             <div className="monitor-no-gpu">GPU: 未検出</div>
           )}

@@ -193,6 +193,27 @@ html, body, #root { height: 100%; overflow: hidden; }
 .btn-small:hover { background: var(--bg-tab-active); }
 .btn-small:disabled { opacity: 0.4; cursor: default; }
 
+.dir-header-btns { display: flex; align-items: center; gap: 4px; }
+.recent-dir-wrapper { position: relative; }
+.recent-dir-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1000;
+  background: var(--bg-tab);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 160px;
+  max-width: 280px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  padding: 4px 0;
+}
+.recent-dir-menu .context-menu-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file-items { list-style: none; padding: 4px 0; }
 .file-item {
   display: flex;
@@ -213,6 +234,22 @@ html, body, #root { height: 100%; overflow: hidden; }
 .empty-msg { padding: 6px 12px; color: var(--text-muted); font-size: 11px; }
 .loading { padding: 8px 12px; color: var(--text-muted); }
 .error-msg { padding: 6px 12px; color: var(--red); font-size: 11px; }
+
+.search-panel { display: flex; flex-direction: column; height: 100%; }
+.search-header { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.search-header .search-input { flex: 1; border-bottom: none; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); }
+.search-scope-info {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; font-size: 11px; color: var(--text-muted);
+  background: var(--bg-tab); border-bottom: 1px solid var(--border);
+}
+.btn-clear-scope {
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  font-size: 10px; padding: 0 2px; line-height: 1;
+}
+.btn-clear-scope:hover { color: var(--red); }
+.search-dir-label { padding: 4px 8px; font-size: 10px; color: var(--text-muted); }
+.search-dir-tree { flex: 1; overflow: auto; }
 
 .search-input {
   width: 100%;
@@ -243,6 +280,7 @@ html, body, #root { height: 100%; overflow: hidden; }
 
 /* 行番号付きエディタ */
 .editor-wrapper { display: flex; flex: 1; overflow: hidden; }
+.editor-area { position: relative; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .line-numbers {
   background: #11111b;
   color: var(--text-muted);
@@ -369,6 +407,13 @@ html, body, #root { height: 100%; overflow: hidden; }
 
 .clock-time { font-size: 22px; font-weight: 700; color: var(--text-primary); text-align: center; }
 .clock-date { font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 2px; }
+
+.battery-widget .battery-content { display: flex; align-items: center; gap: 10px; }
+.battery-widget svg { color: var(--text-primary); }
+.battery-info { display: flex; flex-direction: column; gap: 2px; }
+.battery-percent { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.battery-status { font-size: 11px; color: var(--text-muted); }
+.battery-time { font-size: 11px; color: var(--text-muted); }
 
 .info-widget ul { list-style: none; padding: 0; }
 .info-widget li { font-size: 11px; color: var(--text-secondary); padding: 2px 0; }
@@ -898,3 +943,54 @@ html, body, #root { height: 100%; overflow: hidden; }
 .diff-del { background: rgba(243, 139, 168, 0.12); color: var(--red); }
 .diff-hunk { color: var(--accent2); background: rgba(203, 166, 247, 0.08); }
 .diff-meta { color: var(--text-muted); }
+
+/* 検索結果ビューア */
+.search-result-viewer {
+  flex: 1; overflow: auto; background: var(--bg-pane);
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 12px;
+}
+.search-result-content { margin: 0; padding: 4px 0; }
+.search-line { padding: 0 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--text-secondary); }
+.search-file-header { color: var(--accent); font-weight: 600; margin-top: 4px; }
+.search-match-line { cursor: pointer; }
+.search-match-line:hover { background: var(--bg-tab); }
+.search-line-num { color: var(--text-muted); }
+.search-highlight { background: rgba(249, 226, 175, 0.3); color: var(--yellow); font-weight: 600; }
+
+/* マークダウン シンタックスハイライト（オーバーレイ方式） */
+.md-highlight-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 6px; bottom: 0;
+  margin: 0;
+  padding: 8px 12px;
+  font-family: "Consolas", "Cascadia Code", "Source Code Pro", monospace;
+  line-height: 1.6;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text-primary);
+  background: var(--bg-pane);
+  z-index: 0;
+}
+.md-editor-transparent {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--text-primary);
+  background: transparent;
+}
+.md-heading { color: #f38ba8; font-weight: 700; }
+.md-code-fence { color: #a6e3a1; }
+.md-hr { color: var(--text-muted); }
+.md-blockquote { color: #a6adc8; font-style: italic; }
+.md-list-marker { color: #89b4fa; font-weight: 600; }
+.md-bold { color: #f9e2af; font-weight: 700; }
+.md-italic { color: #cba6f7; font-style: italic; }
+.md-inline-code { color: #a6e3a1; background: rgba(166, 227, 161, 0.1); border-radius: 2px; }
+.md-link { color: #89b4fa; text-decoration: underline; }
+.md-image { color: #cba6f7; }
+.md-checkbox { color: var(--text-muted); }
+.md-checkbox-checked { color: #a6e3a1; }

@@ -21,6 +21,7 @@ export interface AppSettings {
     showHidden: boolean;
   };
   lastOpenDir?: string | null;
+  recentDirs?: string[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -37,6 +38,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       { id: "news", visible: true },
       { id: "systemMonitor", visible: true },
       { id: "claudeCode", visible: true },
+      { id: "battery", visible: true },
       { id: "info", visible: true },
     ],
     photoFolder: null,
@@ -57,6 +59,7 @@ export const WIDGET_LABELS: Record<string, string> = {
   news: "ニュース",
   systemMonitor: "システムモニター",
   claudeCode: "Claude Code",
+  battery: "バッテリー",
   info: "ALICE について",
 };
 
@@ -88,11 +91,17 @@ export interface CursorPos {
   end: number;
 }
 
+export interface DirTabState {
+  openFiles: string[];
+  activeFile?: string | null;
+}
+
 export interface AppWindowState {
   windowX?: number | null;
   windowY?: number | null;
   windowWidth?: number | null;
   windowHeight?: number | null;
+  isMaximized?: boolean | null;
   leftWidth?: number | null;
   rightWidth?: number | null;
   consoleHeight?: number | null;
@@ -100,6 +109,7 @@ export interface AppWindowState {
   openFiles: string[];
   activeFile?: string | null;
   cursorPositions: Record<string, CursorPos>;
+  dirTabStates?: Record<string, DirTabState>;
 }
 
 export async function loadAppState(): Promise<AppWindowState> {
