@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import FileIcon from "./FileIcon";
 import GitPane from "./GitPane";
@@ -126,6 +127,56 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
   useEffect(() => {
     onExpandedDirsChange?.(Array.from(expandedDirs));
   }, [expandedDirs]);
+
+  // 外部ファイル変更の監視
+  // 現在展開中のディレクトリを追跡するref（stale closure 回避）
+  const loadedDirsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const s = new Set(dirContents.keys());
+    if (currentDir) s.add(currentDir);
+    loadedDirsRef.current = s;
+  }, [dirContents, currentDir]);
+
+  useEffect(() => {
+    if (!currentDir) return;
+
+    invoke("watch_directory", { path: currentDir });
+
+    const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    const unlistenPromise = listen<string[]>("file-changed", (event) => {
+      for (const changedDir of event.payload) {
+        // パス区切り文字を正規化して比較
+        const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+        const matchedDir = [...loadedDirsRef.current].find(
+          d => norm(d) === norm(changedDir)
+        );
+        if (!matchedDir) continue;
+
+        // デバウンス: 500ms 以内の連続イベントをまとめる
+        if (debounceTimers.has(matchedDir)) {
+          clearTimeout(debounceTimers.get(matchedDir)!);
+        }
+        const id = setTimeout(async () => {
+          debounceTimers.delete(matchedDir);
+          try {
+            const items = await invoke<FileItem[]>("list_directory", {
+              path: matchedDir,
+              showHidden: showHiddenRef.current,
+            });
+            setDirContents(prev => new Map(prev).set(matchedDir, items));
+          } catch {}
+        }, 500);
+        debounceTimers.set(matchedDir, id);
+      }
+    });
+
+    return () => {
+      unlistenPromise.then(fn => fn());
+      for (const id of debounceTimers.values()) clearTimeout(id);
+      invoke("unwatch_directory");
+    };
+  }, [currentDir]);
 
   // showHidden 変更時にリロード
   const showHiddenRef = useRef(showHidden);

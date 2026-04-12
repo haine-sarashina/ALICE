@@ -4,7 +4,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
-use tauri::Manager;
+use tauri::{Manager, Emitter};
+use notify::{Watcher, RecursiveMode};
 
 // ─── アプリ設定 ───
 
@@ -738,6 +739,45 @@ fn get_system_stats(
     }
 }
 
+// ─── ファイル監視 ───
+
+struct FileWatcherState(Mutex<Option<notify::RecommendedWatcher>>);
+
+#[tauri::command]
+fn watch_directory(app: tauri::AppHandle, path: String, state: tauri::State<FileWatcherState>) {
+    let mut guard = state.0.lock().unwrap();
+    // 古いウォッチャーを停止
+    *guard = None;
+
+    let app_clone = app.clone();
+    match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            // 変更されたファイルの親ディレクトリを収集（重複排除）
+            let dirs: std::collections::HashSet<String> = event.paths.iter()
+                .filter_map(|p| p.parent().and_then(|d| d.to_str()).map(|s| s.to_string()))
+                .collect();
+            if !dirs.is_empty() {
+                let dir_list: Vec<String> = dirs.into_iter().collect();
+                let _ = app_clone.emit("file-changed", &dir_list);
+            }
+        }
+    }) {
+        Ok(mut watcher) => {
+            let _ = watcher.watch(std::path::Path::new(&path), RecursiveMode::Recursive);
+            *guard = Some(watcher);
+        }
+        Err(e) => {
+            eprintln!("ファイル監視の開始に失敗: {}", e);
+        }
+    }
+}
+
+#[tauri::command]
+fn unwatch_directory(state: tauri::State<FileWatcherState>) {
+    let mut guard = state.0.lock().unwrap();
+    *guard = None;
+}
+
 // ─── バッテリー ───
 
 #[derive(Serialize)]
@@ -758,7 +798,16 @@ $b = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
 if ($null -eq $b) { Write-Output "none"; exit }
 $pct = [int]$b.EstimatedChargeRemaining
 $status = [int]$b.BatteryStatus
-$isCharging = ($status -eq 6 -or $status -eq 7 -or $status -eq 8 -or $status -eq 9 -or $status -eq 10)
+# root\wmi の BatteryStatus.PowerOnline でACアダプター接続を確認（最も信頼性が高い）
+$isCharging = $false
+try {
+    $ws = Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus -ErrorAction Stop
+    $isCharging = [bool]$ws.PowerOnline
+} catch {
+    # フォールバック: BatteryStatus値で判定
+    # 3=Fully Charged(AC接続), 6=Charging, 7=Charging+High, 8=Charging+Low, 9=Charging+Critical, 11=Partially Charged
+    $isCharging = ($status -eq 3 -or $status -eq 6 -or $status -eq 7 -or $status -eq 8 -or $status -eq 9 -or $status -eq 11)
+}
 $runtime = [int]$b.EstimatedRunTime
 if ($null -eq $b.EstimatedRunTime -or $runtime -le 0 -or $runtime -ge 71582788) { $runtime = -1 }
 Write-Output "$pct|$isCharging|$runtime"
@@ -1168,6 +1217,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(SystemState(Mutex::new(sys)))
         .manage(GpuCache(gpu_cache_data))
+        .manage(FileWatcherState(Mutex::new(None)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -1200,6 +1250,8 @@ pub fn run() {
             grep_files,
             list_directories_only,
             get_battery_info,
+            watch_directory,
+            unwatch_directory,
         ])
         .on_window_event(|window, event| {
             // メインウィンドウが閉じられたらアプリ全体を終了
