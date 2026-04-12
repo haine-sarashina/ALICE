@@ -959,21 +959,25 @@ html, body, #root { height: 100%; overflow: hidden; }
 .search-highlight { background: rgba(249, 226, 175, 0.3); color: var(--yellow); font-weight: 600; }
 
 /* マークダウン シンタックスハイライト（オーバーレイ方式） */
+/* ※ font-weight / font-style の変更はカーソルズレの原因になるため使用禁止 */
+/* ※ スクロール同期は scrollTop ではなく transform で行う（scrollHeight 差異を回避） */
 .md-highlight-overlay {
   position: absolute;
-  top: 0; left: 0; right: 6px; bottom: 0;
+  top: 0; left: 0;
+  /* width は JS (ResizeObserver) で textarea の clientWidth に合わせる */
   margin: 0;
   padding: 8px 12px;
   font-family: "Consolas", "Cascadia Code", "Source Code Pro", monospace;
   line-height: 1.6;
   tab-size: 2;
   white-space: pre-wrap;
-  word-break: break-all;
-  overflow: hidden;
+  word-break: break-word;
+  overflow: visible;
   pointer-events: none;
   color: var(--text-primary);
   background: var(--bg-pane);
   z-index: 0;
+  will-change: transform;
 }
 .md-editor-transparent {
   position: relative;
@@ -982,15 +986,15 @@ html, body, #root { height: 100%; overflow: hidden; }
   caret-color: var(--text-primary);
   background: transparent;
 }
-.md-heading { color: #f38ba8; font-weight: 700; }
+.md-heading { color: #f38ba8; }
 .md-code-fence { color: #a6e3a1; }
 .md-hr { color: var(--text-muted); }
-.md-blockquote { color: #a6adc8; font-style: italic; }
-.md-list-marker { color: #89b4fa; font-weight: 600; }
-.md-bold { color: #f9e2af; font-weight: 700; }
-.md-italic { color: #cba6f7; font-style: italic; }
-.md-inline-code { color: #a6e3a1; background: rgba(166, 227, 161, 0.1); border-radius: 2px; }
-.md-link { color: #89b4fa; text-decoration: underline; }
+.md-blockquote { color: #a6adc8; }
+.md-list-marker { color: #89b4fa; }
+.md-bold { color: #f9e2af; }
+.md-italic { color: #cba6f7; }
+.md-inline-code { color: #a6e3a1; }
+.md-link { color: #89b4fa; }
 .md-image { color: #cba6f7; }
 .md-checkbox { color: var(--text-muted); }
 .md-checkbox-checked { color: #a6e3a1; }

@@ -80,6 +80,8 @@ export default function EditorPane({
   const highlightRef = useRef<HTMLPreElement>(null);
 
   // 行番号とテキストエリアのスクロールを同期（+ マークダウンハイライト同期）
+  // ※ オーバーレイは scrollTop ではなく CSS transform でオフセットする。
+  //   scrollHeight の差異に依存しないため末尾でもズレが生じない。
   useEffect(() => {
     const ta = textareaRef.current;
     const ln = lineNumberRef.current;
@@ -88,13 +90,29 @@ export default function EditorPane({
     const sync = () => {
       ln.scrollTop = ta.scrollTop;
       if (hl) {
-        hl.scrollTop = ta.scrollTop;
-        hl.scrollLeft = ta.scrollLeft;
+        hl.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
       }
     };
+    sync(); // タブ切り替え時に初期位置を反映
     ta.addEventListener("scroll", sync);
     return () => ta.removeEventListener("scroll", sync);
   }, [activeTabId, isMarkdown]);
+
+  // マークダウンオーバーレイの幅を textarea の clientWidth（スクロールバーを除く）に動的合わせ
+  // テキスト折り返し位置を textarea と一致させるために必要
+  useEffect(() => {
+    if (!isMarkdown) return;
+    const ta = textareaRef.current;
+    const hl = highlightRef.current;
+    if (!ta || !hl) return;
+    const syncWidth = () => {
+      hl.style.width = ta.clientWidth + "px";
+    };
+    syncWidth();
+    const observer = new ResizeObserver(syncWidth);
+    observer.observe(ta);
+    return () => observer.disconnect();
+  }, [isMarkdown, activeTabId]);
 
   // カーソル位置の復元
   const restoredTabsRef = useRef<Set<string>>(new Set());
@@ -445,7 +463,7 @@ export default function EditorPane({
   );
 
   function markdownHighlight(text: string): string {
-    return text.split("\n").map(line => {
+    return text.split(/\r?\n/).map(line => {
       // HTMLエスケープ
       let escaped = line
         .replace(/&/g, "&amp;")
