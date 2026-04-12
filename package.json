@@ -1,17 +1,28 @@
 {
   "name": "alice",
-  "version": "0.1.0",
-  "description": "ALICE (AI Local Interface for Code Editor) - Tauri v2 + React + LM Studio クライアント",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter alice-app dev",
-    "build": "pnpm --filter alice-app build",
-    "tauri": "pnpm --filter alice-app tauri"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
-  "keywords": ["tauri", "rust", "ai", "lm-studio", "claude-code"],
-  "license": "MIT",
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
   }
 }
