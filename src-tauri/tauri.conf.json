@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.haine.alice",
   "build": {
-    "beforeDevCommand": "node scripts/free-port.cjs && pnpm run dev",
-    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm run dev",
     "beforeBuildCommand": "pnpm run build",
     "frontendDist": "../dist"
   },
