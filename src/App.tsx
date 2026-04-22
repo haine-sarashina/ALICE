@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import LeftPane from "./components/LeftPane";
 import EditorPane, { type EditorTab } from "./components/EditorPane";
 import ConsolePane from "./components/ConsolePane";
@@ -134,22 +134,49 @@ export default function App() {
   }, [appStateReady]);
 
   // F11 キーでフルスクリーン切替
+  // decorations:false の Windows では setFullscreen(true) がリサイズしないため、
+  // モニタサイズへ手動リサイズ + setAlwaysOnTop でタスクバー覆いを自前で実装
+  const fullscreenBackupRef = useRef<{
+    x: number; y: number; width: number; height: number; maximized: boolean;
+  } | null>(null);
   useEffect(() => {
     const handleKey = async (e: KeyboardEvent) => {
-      if (e.key === "F11") {
-        e.preventDefault();
-        try {
-          const win = getCurrentWindow();
-          const isFullscreen = await win.isFullscreen();
-          if (isFullscreen) {
-            await win.setAlwaysOnTop(false);
-            await win.setFullscreen(false);
+      if (e.key !== "F11") return;
+      e.preventDefault();
+      try {
+        const win = getCurrentWindow();
+        const dpi = await import("@tauri-apps/api/dpi");
+
+        if (fullscreenBackupRef.current) {
+          // 退出：元のサイズ/位置に戻す
+          const bak = fullscreenBackupRef.current;
+          fullscreenBackupRef.current = null;
+          await win.setAlwaysOnTop(false);
+          if (bak.maximized) {
+            await win.maximize();
           } else {
-            await win.setAlwaysOnTop(true);
-            await win.setFullscreen(true);
+            await win.setPosition(new dpi.PhysicalPosition(bak.x, bak.y));
+            await win.setSize(new dpi.PhysicalSize(bak.width, bak.height));
           }
-        } catch {}
-      }
+        } else {
+          // 進入：現在のサイズを退避してモニタ全体に拡大
+          const maximized = await win.isMaximized();
+          const outer = await win.outerPosition();
+          const osize = await win.outerSize();
+          fullscreenBackupRef.current = {
+            x: outer.x, y: outer.y, width: osize.width, height: osize.height, maximized,
+          };
+          if (maximized) {
+            try { await win.unmaximize(); } catch {}
+          }
+          const monitor = await currentMonitor();
+          if (monitor) {
+            await win.setPosition(new dpi.PhysicalPosition(monitor.position.x, monitor.position.y));
+            await win.setSize(new dpi.PhysicalSize(monitor.size.width, monitor.size.height));
+            await win.setAlwaysOnTop(true);
+          }
+        }
+      } catch {}
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -160,7 +187,9 @@ export default function App() {
   saveStateRef.current = async () => {
     try {
       const win = getCurrentWindow();
-      const size = await win.outerSize();
+      // setSize はクライアント領域（inner）を設定するため、
+      // 復元時のドリフトを防ぐため保存時も innerSize を使う
+      const size = await win.innerSize();
       const pos = await win.outerPosition();
       const factor = await win.scaleFactor();
       const maximized = await win.isMaximized();

@@ -9,6 +9,8 @@
     "core:window:allow-minimize",
     "core:window:allow-maximize",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-current-monitor",
     "core:window:allow-set-focus",
     "core:window:allow-show",
     "core:window:allow-set-size",
@@ -29,6 +31,8 @@
       "allow": [
         { "name": "claude", "cmd": "claude", "args": true, "sidecar": false },
         { "name": "cmd-claude", "cmd": "cmd", "args": true, "sidecar": false },
+        { "name": "ollama", "cmd": "ollama", "args": true, "sidecar": false },
+        { "name": "cmd-ollama", "cmd": "cmd", "args": true, "sidecar": false },
         { "name": "powershell", "cmd": "powershell", "args": true, "sidecar": false },
         { "name": "zsh", "cmd": "zsh", "args": true, "sidecar": false },
         { "name": "bash", "cmd": "bash", "args": true, "sidecar": false }

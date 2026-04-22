@@ -25,6 +25,19 @@
 
 ### ✅ 完了
 
+#### ■ 全体（追加分13）
+- [x] 再起動するたびにウィンドウサイズが微妙に変わる → 保存時に `outerSize()`（装飾込み）を使い、復元時に `setSize()`（クライアント領域設定）を使っていたため、起動毎にタイトルバー＋枠分がドリフトしていた。保存側を `innerSize()` に変更して対称化
+- [x] F11フルスクリーンでタスクバーは消えるがウィンドウの高さが変わらない → `decorations: false` の Windows では `setFullscreen(true)` がリサイズしない問題。`currentMonitor()` でモニタサイズを取得して `setSize`/`setPosition` で手動全画面化、`setAlwaysOnTop(true)` でタスクバーを覆う方式に変更。退出時は保存しておいた位置/サイズ（or 最大化状態）に復元
+
+#### ■ 中央下ペイン：コンソールエリア（追加分13）
+- [x] **Ollamaタブを追加** → ConsolePane.tsx に OllamaTab コンポーネント追加、Rust 側に ollama_installed/claude_installed/ollama_models コマンド追加
+    - [x] Ollamaのインストールを確認。インストールされていない場合はインストールしてくださいと表示する。 → `ollama --version` で判定、未インストール時はダウンロードリンク付き案内を表示
+    - [x] Claude Codeのインストールを確認。インストールされていない場合はインストールしてくださいと表示する。 → `claude --version` で判定、未インストール時はインストール案内を表示
+    - [x] タブの中にはモデル選択のドロップダウンリスト、「起動」ボタン、コンソールを表示 → ツールバーに selector + プロンプト入力 + 起動/停止/再取得ボタン、下部にコンソール出力＋入力欄
+    - [x] モデル選択のリストではOllamaでダウンロード済みのモデル一覧を表示 → `ollama list` をパースして NAME 列だけ抽出
+    - [x] 「起動」ボタンを押すとコンソールで「ollama launch claude --model 選択したモデル名」で起動する。 → Command.create で spawn、stdout/stderr をコンソールに出力、stdin で対話可能
+    - [x] `claude --print` が stdin を 3 秒しか待たず "Input must be provided..." で失敗する問題を修正 → 起動前に必須プロンプト入力欄を追加し、spawn 直後に stdin へ即書き込みする方式に変更
+
 #### ■ 中央上ペイン：テキストエディタ（追加分12）
 - [x] *.mdファイルの編集時にカーソル位置がずれる → CRLF ファイル（CLAUDE.md等）で `\n` 分割すると各行末に `\r` が残りスパン内でダブル改行になる問題を修正（`split(/\r?\n/)` に変更）。併せてオーバーレイの font-weight/font-style/word-break/right の不整合も修正
 

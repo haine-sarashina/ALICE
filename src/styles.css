@@ -499,6 +499,34 @@ html, body, #root { height: 100%; overflow: hidden; }
   background: #11111b; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 
+/* Ollama タブ */
+.ollama-toolbar {
+  display: flex; gap: 6px; padding: 4px 8px; align-items: center;
+  background: #11111b; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.ollama-label { color: var(--text-secondary); font-size: 12px; }
+.ollama-model-select {
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
+  min-width: 180px;
+}
+.ollama-model-select:disabled { opacity: 0.5; }
+.ollama-prompt-input {
+  flex: 1; min-width: 180px;
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
+}
+.ollama-prompt-input:disabled { opacity: 0.5; }
+.ollama-error { color: #f38ba8; font-size: 11px; margin-left: 4px; }
+.ollama-notice {
+  padding: 8px 10px; background: #3a2730; color: #f9e2af;
+  border-bottom: 1px solid var(--border); font-size: 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ollama-notice .notice-line a { color: #89b4fa; margin: 0 2px; }
+.ollama-notice .btn-small { align-self: flex-start; margin-top: 2px; }
+
 /* ファイルリスト選択状態 */
 .file-item.selected {
   background: var(--bg-tab-active);

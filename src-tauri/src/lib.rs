@@ -1202,6 +1202,46 @@ fn git_has_remote(cwd: &str) -> Result<bool, String> {
     Ok(!remotes.is_empty())
 }
 
+#[tauri::command]
+fn ollama_installed() -> bool {
+    silent_command("ollama")
+        .args(["--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn claude_installed() -> bool {
+    silent_command("claude")
+        .args(["--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn ollama_models() -> Result<Vec<String>, String> {
+    let out = silent_command("ollama")
+        .args(["list"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut models = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 { continue; }
+        if let Some(name) = line.split_whitespace().next() {
+            if !name.is_empty() {
+                models.push(name.to_string());
+            }
+        }
+    }
+    Ok(models)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut sys = System::new();
@@ -1252,6 +1292,9 @@ pub fn run() {
             get_battery_info,
             watch_directory,
             unwatch_directory,
+            ollama_installed,
+            claude_installed,
+            ollama_models,
         ])
         .on_window_event(|window, event| {
             // メインウィンドウが閉じられたらアプリ全体を終了

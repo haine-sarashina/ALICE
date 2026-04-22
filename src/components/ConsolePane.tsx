@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Command } from "@tauri-apps/plugin-shell";
+import { invoke } from "@tauri-apps/api/core";
 import { streamChatCompletion, type Message } from "../lib/lmstudio";
 
 interface ConsoleLine {
@@ -7,7 +8,7 @@ interface ConsoleLine {
   text: string;
 }
 
-type Tab = "claude" | "chat" | "log" | "console";
+type Tab = "claude" | "chat" | "log" | "console" | "ollama";
 
 // シェルタブ（PowerShell / Zsh）
 function ShellTab({ cwd }: { cwd?: string }) {
@@ -229,6 +230,218 @@ function ClaudeCodeTab({ cwd }: { cwd?: string }) {
   );
 }
 
+// Ollamaタブ（モデル選択＋起動＋コンソール）
+function OllamaTab({ cwd }: { cwd?: string }) {
+  const [ollamaOk, setOllamaOk] = useState<boolean | null>(null);
+  const [claudeOk, setClaudeOk] = useState<boolean | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [modelsError, setModelsError] = useState<string>("");
+  const [lines, setLines] = useState<string[]>([]);
+  const [input, setInput] = useState("");
+  const [initialPrompt, setInitialPrompt] = useState("");
+  const [running, setRunning] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const childRef = useRef<{ write: (data: string) => Promise<void>; kill: () => Promise<void> } | null>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [lines]);
+
+  const refreshChecks = useCallback(async () => {
+    try {
+      const [oi, ci] = await Promise.all([
+        invoke<boolean>("ollama_installed"),
+        invoke<boolean>("claude_installed"),
+      ]);
+      setOllamaOk(oi);
+      setClaudeOk(ci);
+      if (oi) {
+        try {
+          const ms = await invoke<string[]>("ollama_models");
+          setModels(ms);
+          setSelectedModel(prev => prev || (ms[0] ?? ""));
+          setModelsError("");
+        } catch (e) {
+          setModels([]);
+          setModelsError(String(e));
+        }
+      } else {
+        setModels([]);
+      }
+    } catch (e) {
+      setOllamaOk(false);
+      setClaudeOk(false);
+      setModelsError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshChecks();
+  }, [refreshChecks]);
+
+  async function launch() {
+    if (!selectedModel || running) return;
+    const prompt = initialPrompt.trim();
+    if (!prompt) {
+      setLines(prev => [...prev, "[エラー] プロンプトを入力してください（claude --print には stdin 経由で入力が必要です）"]);
+      return;
+    }
+    if (childRef.current) {
+      try { await childRef.current.kill(); } catch {}
+      childRef.current = null;
+    }
+
+    const cmdLine = `ollama launch claude --model ${selectedModel}`;
+    setLines(prev => [...prev, `> ${cmdLine}`, `[prompt] ${prompt}`]);
+    setRunning(true);
+
+    const isWin = navigator.platform.startsWith("Win");
+    const cmdName = isWin ? "cmd-ollama" : "ollama";
+    const args = isWin
+      ? ["/c", "ollama", "launch", "claude", "--model", selectedModel]
+      : ["launch", "claude", "--model", selectedModel];
+
+    try {
+      const cmd = Command.create(cmdName, args, { encoding: "utf8", ...(cwd ? { cwd } : {}) });
+      cmd.stdout.on("data", (data: string) => {
+        setLines(prev => [...prev, ...data.split("\n")]);
+      });
+      cmd.stderr.on("data", (data: string) => {
+        setLines(prev => [...prev, ...data.split("\n")]);
+      });
+      cmd.on("close", () => {
+        setLines(prev => [...prev, "[プロセス終了]"]);
+        setRunning(false);
+        childRef.current = null;
+      });
+      cmd.on("error", (err: string) => {
+        setLines(prev => [...prev, `[エラー] ${err}`]);
+        setRunning(false);
+        childRef.current = null;
+      });
+      const child = await cmd.spawn();
+      childRef.current = child;
+      // claude --print は stdin 入力を 3 秒しか待たないため spawn 直後に書き込む
+      try {
+        await child.write(prompt + "\n");
+      } catch (e) {
+        setLines(prev => [...prev, `[stdin書き込み失敗] ${e}`]);
+      }
+    } catch (e) {
+      setLines(prev => [...prev, `起動失敗: ${e}`]);
+      setRunning(false);
+    }
+  }
+
+  async function sendInput() {
+    const text = input.trim();
+    if (!text || !childRef.current) return;
+    setInput("");
+    setLines(prev => [...prev, `> ${text}`]);
+    try {
+      await childRef.current.write(text + "\n");
+    } catch (e) {
+      setLines(prev => [...prev, `送信エラー: ${e}`]);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") { e.preventDefault(); sendInput(); }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (childRef.current) {
+        childRef.current.kill().catch(() => {});
+        childRef.current = null;
+      }
+    };
+  }, []);
+
+  const showMissingNotice = ollamaOk === false || claudeOk === false;
+
+  return (
+    <>
+      {showMissingNotice && (
+        <div className="ollama-notice">
+          {ollamaOk === false && (
+            <div className="notice-line">
+              Ollama がインストールされていません。
+              <a href="https://ollama.com/download" target="_blank" rel="noreferrer">こちら</a>
+              からインストールしてください。
+            </div>
+          )}
+          {claudeOk === false && (
+            <div className="notice-line">
+              Claude Code がインストールされていません。
+              <a href="https://docs.claude.com/en/docs/claude-code/overview" target="_blank" rel="noreferrer">こちら</a>
+              からインストールしてください。
+            </div>
+          )}
+          <button className="btn-small" onClick={refreshChecks}>再チェック</button>
+        </div>
+      )}
+
+      <div className="ollama-toolbar">
+        <label className="ollama-label">モデル:</label>
+        <select
+          className="ollama-model-select"
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          disabled={!ollamaOk || models.length === 0 || running}
+        >
+          {models.length === 0 && <option value="">（モデルなし）</option>}
+          {models.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <input
+          className="ollama-prompt-input"
+          placeholder="初回プロンプト（起動時に stdin へ送信）"
+          value={initialPrompt}
+          onChange={(e) => setInitialPrompt(e.target.value)}
+          disabled={running}
+        />
+        <button
+          className="btn-small"
+          onClick={launch}
+          disabled={!ollamaOk || !claudeOk || !selectedModel || !initialPrompt.trim() || running}
+        >
+          起動
+        </button>
+        {running && (
+          <button className="btn-small" onClick={() => childRef.current?.kill()}>
+            停止
+          </button>
+        )}
+        <button className="btn-small" onClick={refreshChecks} disabled={running}>
+          モデル再取得
+        </button>
+        {modelsError && <span className="ollama-error">{modelsError}</span>}
+      </div>
+
+      <div className="pane-content console-output">
+        {lines.map((line, i) => (
+          <div key={i} className="console-line system">
+            <span className="line-text">{line}</span>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+      <div className="console-input-row">
+        <input
+          className="console-input"
+          placeholder={running ? "入力... (Enter で送信)" : "「起動」でプロセスを開始"}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={!running}
+        />
+        <button className="btn-send" onClick={sendInput} disabled={!running || !input.trim()}>送信</button>
+      </div>
+    </>
+  );
+}
+
 export default function ConsolePane({ cwd }: { cwd?: string }) {
   const [activeTab, setActiveTab] = useState<Tab>("claude");
   const [lines, setLines] = useState<ConsoleLine[]>([
@@ -279,6 +492,7 @@ export default function ConsolePane({ cwd }: { cwd?: string }) {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "claude", label: "Claude Code" },
+    { id: "ollama", label: "Ollama" },
     { id: "chat",   label: "AI チャット" },
     { id: "log",    label: "ログ" },
     { id: "console", label: "コンソール" },
@@ -295,6 +509,8 @@ export default function ConsolePane({ cwd }: { cwd?: string }) {
       </div>
 
       {activeTab === "claude" && <ClaudeCodeTab cwd={cwd} />}
+
+      {activeTab === "ollama" && <OllamaTab cwd={cwd} />}
 
       {activeTab === "chat" && (
         <>
