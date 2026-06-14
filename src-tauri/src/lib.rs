@@ -996,9 +996,9 @@ fn unquote_git_path(s: &str) -> String {
         let bytes = inner.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
-            if bytes[i] == b'\\' && i + 3 < bytes.len() {
-                // 8進数エスケープ \NNN
-                if bytes[i + 1].is_ascii_digit() {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                // 8進数エスケープ \NNN (3桁、4バイト必要)
+                if i + 3 < bytes.len() && bytes[i + 1].is_ascii_digit() {
                     let oct = &inner[i + 1..i + 4];
                     if let Ok(val) = u8::from_str_radix(oct, 8) {
                         result.push(val);
@@ -1006,7 +1006,7 @@ fn unquote_git_path(s: &str) -> String {
                         continue;
                     }
                 }
-                // その他のエスケープ
+                // 2文字エスケープ
                 match bytes[i + 1] {
                     b'\\' => { result.push(b'\\'); i += 2; }
                     b'n' => { result.push(b'\n'); i += 2; }
@@ -1240,6 +1240,228 @@ fn ollama_models() -> Result<Vec<String>, String> {
         }
     }
     Ok(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_test_dir(suffix: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("alice_test_{}_{}", std::process::id(), suffix));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // ─── decode_html_entities ───
+
+    #[test]
+    fn decode_named_entities() {
+        assert_eq!(decode_html_entities("&amp;"), "&");
+        assert_eq!(decode_html_entities("&lt;"), "<");
+        assert_eq!(decode_html_entities("&gt;"), ">");
+        assert_eq!(decode_html_entities("&quot;"), "\"");
+        assert_eq!(decode_html_entities("&apos;"), "'");
+        assert_eq!(decode_html_entities("&#39;"), "'");
+    }
+
+    #[test]
+    fn decode_numeric_entities() {
+        assert_eq!(decode_html_entities("&#65;"), "A");
+        assert_eq!(decode_html_entities("&#x41;"), "A");
+        assert_eq!(decode_html_entities("&#x3042;"), "あ");
+    }
+
+    #[test]
+    fn decode_chained_entities() {
+        assert_eq!(decode_html_entities("a &amp; b &lt; c"), "a & b < c");
+    }
+
+    #[test]
+    fn decode_no_entities_unchanged() {
+        assert_eq!(decode_html_entities("hello world"), "hello world");
+        assert_eq!(decode_html_entities(""), "");
+    }
+
+    // ─── extract_tag ───
+
+    #[test]
+    fn extract_tag_basic() {
+        assert_eq!(
+            extract_tag("<title>hello</title>", "title"),
+            Some("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_tag_cdata() {
+        assert_eq!(
+            extract_tag("<title><![CDATA[hello & world]]></title>", "title"),
+            Some("hello & world".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_tag_html_entities_decoded() {
+        assert_eq!(
+            extract_tag("<title>foo &amp; bar</title>", "title"),
+            Some("foo & bar".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_tag_missing_returns_none() {
+        assert_eq!(extract_tag("<title>hello</title>", "link"), None);
+    }
+
+    // ─── parse_rss_items ───
+
+    #[test]
+    fn parse_rss_items_empty_body() {
+        assert!(parse_rss_items("").is_empty());
+    }
+
+    #[test]
+    fn parse_rss_items_single() {
+        let xml = r#"<item><title>Test News</title><link>https://example.com/1</link><pubDate>Mon, 01 Jan 2024 00:00:00 +0900</pubDate></item>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Test News");
+        assert_eq!(items[0].url, "https://example.com/1");
+    }
+
+    #[test]
+    fn parse_rss_items_multiple() {
+        let xml = r#"
+            <item><title>A</title><link>https://example.com/a</link><pubDate>x</pubDate></item>
+            <item><title>B</title><link>https://example.com/b</link><pubDate>y</pubDate></item>
+        "#;
+        assert_eq!(parse_rss_items(xml).len(), 2);
+    }
+
+    #[test]
+    fn parse_rss_items_skips_incomplete() {
+        let xml = r#"<item><title>No Link</title></item><item><link>https://example.com</link></item>"#;
+        assert!(parse_rss_items(xml).is_empty());
+    }
+
+    // ─── unquote_git_path ───
+
+    #[test]
+    fn unquote_git_path_plain() {
+        assert_eq!(unquote_git_path("src/main.rs"), "src/main.rs");
+    }
+
+    #[test]
+    fn unquote_git_path_quoted_ascii() {
+        assert_eq!(unquote_git_path("\"src/main.rs\""), "src/main.rs");
+    }
+
+    #[test]
+    fn unquote_git_path_japanese_utf8_octals() {
+        // "あ" = UTF-8 bytes 0xE3 0x81 0x82 = octal \343\201\202
+        assert_eq!(unquote_git_path("\"\\343\\201\\202.rs\""), "あ.rs");
+    }
+
+    #[test]
+    fn unquote_git_path_escape_sequences() {
+        assert_eq!(unquote_git_path("\"a\\\\b\""), "a\\b");
+        assert_eq!(unquote_git_path("\"a\\\"b\""), "a\"b");
+        assert_eq!(unquote_git_path("\"a\\nb\""), "a\nb");
+        assert_eq!(unquote_git_path("\"a\\tb\""), "a\tb");
+    }
+
+    // ─── AppSettings::default ───
+
+    #[test]
+    fn app_settings_default_values() {
+        let s = AppSettings::default();
+        assert!(!s.editor.auto_save);
+        assert_eq!(s.editor.font_size, 13);
+        assert_eq!(s.widgets.photo_interval, 10);
+        assert_eq!(s.widgets.news_interval, 30);
+        assert_eq!(s.widgets.items.len(), 9);
+        assert!(s.widgets.photo_folder.is_none());
+        assert!(s.widgets.news_keywords.is_empty());
+        assert!(s.last_open_dir.is_none());
+        assert!(s.recent_dirs.is_empty());
+    }
+
+    #[test]
+    fn app_settings_default_widget_ids() {
+        let s = AppSettings::default();
+        let ids: Vec<&str> = s.widgets.items.iter().map(|w| w.id.as_str()).collect();
+        assert!(ids.contains(&"clock"));
+        assert!(ids.contains(&"calendar"));
+        assert!(ids.contains(&"weather"));
+        assert!(ids.contains(&"battery"));
+        assert!(ids.contains(&"claudeCode"));
+    }
+
+    // ─── write_file / read_file ───
+
+    #[test]
+    fn write_and_read_file_roundtrip() {
+        let dir = temp_test_dir("write_read");
+        let path = dir.join("test.txt").to_string_lossy().to_string();
+        write_file(&path, "hello world").unwrap();
+        assert_eq!(read_file(&path).unwrap(), "hello world");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn write_file_creates_parent_dirs() {
+        let dir = temp_test_dir("write_nested");
+        let path = dir.join("a/b/c/file.txt").to_string_lossy().to_string();
+        write_file(&path, "nested").unwrap();
+        assert_eq!(read_file(&path).unwrap(), "nested");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn read_file_missing_returns_err() {
+        assert!(read_file("/nonexistent_alice_test_path/file.txt").is_err());
+    }
+
+    // ─── list_directory ───
+
+    #[test]
+    fn list_directory_dirs_before_files() {
+        let dir = temp_test_dir("list_dir");
+        fs::write(dir.join("z_file.txt"), "").unwrap();
+        fs::create_dir(dir.join("a_subdir")).unwrap();
+        let items = list_directory(&dir.to_string_lossy(), None).unwrap();
+        assert!(items[0].is_dir, "first item should be directory");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn list_directory_hides_dotfiles_by_default() {
+        let dir = temp_test_dir("list_hidden");
+        fs::write(dir.join(".hidden"), "").unwrap();
+        fs::write(dir.join("visible.txt"), "").unwrap();
+        let items = list_directory(&dir.to_string_lossy(), Some(false)).unwrap();
+        assert!(items.iter().all(|i| !i.name.starts_with('.')));
+        assert_eq!(items.len(), 1);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn list_directory_shows_dotfiles_when_requested() {
+        let dir = temp_test_dir("list_show_hidden");
+        fs::write(dir.join(".hidden"), "").unwrap();
+        fs::write(dir.join("visible.txt"), "").unwrap();
+        let items = list_directory(&dir.to_string_lossy(), Some(true)).unwrap();
+        assert_eq!(items.len(), 2);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn list_directory_invalid_path_returns_err() {
+        assert!(list_directory("/nonexistent_alice_test_path", None).is_err());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
