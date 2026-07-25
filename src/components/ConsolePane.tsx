@@ -1,14 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Command } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
-import { streamChatCompletion, type Message } from "../lib/lmstudio";
 
-interface ConsoleLine {
-  type: "user" | "assistant" | "system" | "error";
-  text: string;
-}
 
-type Tab = "claude" | "chat" | "log" | "console" | "ollama";
+type Tab = "log" | "console" | "ollama";
 
 // シェルタブ（PowerShell / Zsh）
 function ShellTab({ cwd }: { cwd?: string }) {
@@ -107,124 +102,6 @@ function ShellTab({ cwd }: { cwd?: string }) {
           disabled={!running}
         />
         <button className="btn-send" onClick={sendCommand} disabled={!running || !input.trim()}>実行</button>
-      </div>
-    </>
-  );
-}
-
-// Claude Code タブ（-p モードでメッセージごとに実行）
-function ClaudeCodeTab({ cwd }: { cwd?: string }) {
-  const [lines, setLines] = useState<{ role: "user" | "claude" | "system"; text: string }[]>([
-    { role: "system", text: "メッセージを入力して送信してください。Claude Code が応答します。" },
-  ]);
-  const [input, setInput] = useState("");
-  const [running, setRunning] = useState(false);
-  const [isFirstMessage, setIsFirstMessage] = useState(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const childRef = useRef<{ kill: () => Promise<void> } | null>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lines]);
-
-  async function sendMessage() {
-    const prompt = input.trim();
-    if (!prompt || running) return;
-    setInput("");
-    setRunning(true);
-    setLines(prev => [...prev, { role: "user", text: prompt }]);
-
-    const isWin = navigator.platform.startsWith("Win");
-    // --continue で前回の会話を継続（初回は新規会話）
-    const claudeArgs = isFirstMessage
-      ? ["-p", prompt]
-      : ["-p", prompt, "--continue"];
-    const args = isWin ? ["/c", "claude", ...claudeArgs] : claudeArgs;
-    const cmdName = isWin ? "cmd-claude" : "claude";
-
-    let output = "";
-    try {
-      const cmd = Command.create(cmdName, args, { encoding: "utf8", ...(cwd ? { cwd } : {}) });
-      cmd.stdout.on("data", (data: string) => {
-        output += data;
-        // リアルタイムで最後のClaude行を更新
-        setLines(prev => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "claude") {
-            return [...prev.slice(0, -1), { role: "claude", text: output }];
-          }
-          return [...prev, { role: "claude", text: output }];
-        });
-      });
-      cmd.stderr.on("data", (data: string) => {
-        // stderr の warning は無視（進捗表示等）
-        if (!data.includes("Warning:")) {
-          setLines(prev => [...prev, { role: "system", text: `[stderr] ${data.replace(/\n$/, "")}` }]);
-        }
-      });
-      const child = await cmd.spawn();
-      childRef.current = child;
-
-      // close イベントを待つ
-      await new Promise<void>((resolve) => {
-        cmd.on("close", () => resolve());
-        cmd.on("error", (err: string) => {
-          setLines(prev => [...prev, { role: "system", text: `[エラー] ${err}` }]);
-          resolve();
-        });
-      });
-      setIsFirstMessage(false);
-    } catch (e) {
-      setLines(prev => [...prev, { role: "system", text: `実行失敗: ${e}` }]);
-    } finally {
-      setRunning(false);
-      childRef.current = null;
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") { e.preventDefault(); sendMessage(); }
-  }
-
-  function handleNewConversation() {
-    setIsFirstMessage(true);
-    setLines([{ role: "system", text: "新しい会話を開始します。" }]);
-  }
-
-  return (
-    <>
-      <div className="claude-toolbar">
-        <button className="btn-small" onClick={handleNewConversation} disabled={running}>
-          新しい会話
-        </button>
-        {running && (
-          <button className="btn-small" onClick={() => childRef.current?.kill()}>
-            停止
-          </button>
-        )}
-      </div>
-      <div className="pane-content console-output">
-        {lines.map((l, i) => (
-          <div key={i} className={`console-line ${l.role === "user" ? "user" : l.role === "claude" ? "assistant" : "system"}`}>
-            {l.role !== "system" && (
-              <span className="line-prefix">{l.role === "user" ? "You" : "Claude"}&gt; </span>
-            )}
-            <span className="line-text">{l.text}</span>
-          </div>
-        ))}
-        {running && <div className="streaming-indicator">▋</div>}
-        <div ref={bottomRef} />
-      </div>
-      <div className="console-input-row">
-        <input
-          className="console-input"
-          placeholder="メッセージを入力... (Enter で送信)"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={running}
-        />
-        <button className="btn-send" onClick={sendMessage} disabled={running || !input.trim()}>送信</button>
       </div>
     </>
   );
@@ -443,57 +320,14 @@ function OllamaTab({ cwd }: { cwd?: string }) {
 }
 
 export default function ConsolePane({ cwd }: { cwd?: string }) {
-  const [activeTab, setActiveTab] = useState<Tab>("claude");
-  const [lines, setLines] = useState<ConsoleLine[]>([
-    { type: "system", text: "ALICE コンソール起動。LM Studio に接続してください。" },
-  ]);
-  const [outputLines, setOutputLines] = useState<string[]>(["[ALICE] アプリケーションを起動しました。"]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [lmUrl, setLmUrl] = useState("http://localhost:1234");
-  const [history] = useState<Message[]>([]);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("ollama");
+  const [outputLines] = useState<string[]>(["[ALICE] アプリケーションを起動しました。"]);
   const outputBottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [lines]);
   useEffect(() => { outputBottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [outputLines]);
 
-  async function sendMessage() {
-    if (!input.trim() || isStreaming) return;
-    const userMsg = input.trim();
-    setInput("");
-    setLines((prev) => [...prev, { type: "user", text: userMsg }]);
-    history.push({ role: "user", content: userMsg });
-    setIsStreaming(true);
-    let assistantText = "";
-    setLines((prev) => [...prev, { type: "assistant", text: "" }]);
-    try {
-      await streamChatCompletion(history, (chunk) => {
-        assistantText += chunk;
-        setLines((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { type: "assistant", text: assistantText };
-          return updated;
-        });
-      }, { baseUrl: lmUrl });
-      history.push({ role: "assistant", content: assistantText });
-      setOutputLines((prev) => [...prev, `[AI] 応答完了 (${assistantText.length} 文字)`]);
-    } catch (e) {
-      setLines((prev) => [...prev.slice(0, -1), { type: "error", text: `エラー: ${e}` }]);
-      setOutputLines((prev) => [...prev, `[ERROR] ${e}`]);
-    } finally {
-      setIsStreaming(false);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  }
-
   const tabs: { id: Tab; label: string }[] = [
-    { id: "claude", label: "Claude Code" },
     { id: "ollama", label: "Ollama" },
-    { id: "chat",   label: "AI チャット" },
     { id: "log",    label: "ログ" },
     { id: "console", label: "コンソール" },
   ];
@@ -508,34 +342,7 @@ export default function ConsolePane({ cwd }: { cwd?: string }) {
         ))}
       </div>
 
-      {activeTab === "claude" && <ClaudeCodeTab cwd={cwd} />}
-
       {activeTab === "ollama" && <OllamaTab cwd={cwd} />}
-
-      {activeTab === "chat" && (
-        <>
-          <div className="lm-config">
-            <span>LM Studio URL:</span>
-            <input className="lm-url-input" value={lmUrl} onChange={(e) => setLmUrl(e.target.value)} />
-          </div>
-          <div className="pane-content console-output">
-            {lines.map((line, i) => (
-              <div key={i} className={`console-line ${line.type}`}>
-                <span className="line-prefix">
-                  {line.type === "user" ? "You" : line.type === "assistant" ? "AI" : "SYS"}&gt;{" "}
-                </span>
-                <span className="line-text">{line.text}</span>
-              </div>
-            ))}
-            {isStreaming && <div className="streaming-indicator">▋</div>}
-            <div ref={chatBottomRef} />
-          </div>
-          <div className="console-input-row">
-            <input className="console-input" placeholder="メッセージを入力... (Enter で送信)" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={isStreaming} />
-            <button className="btn-send" onClick={sendMessage} disabled={isStreaming}>送信</button>
-          </div>
-        </>
-      )}
 
       {activeTab === "log" && (
         <div className="pane-content console-output">
