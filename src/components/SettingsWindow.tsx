@@ -12,6 +12,8 @@ export default function SettingsWindow() {
   const [loaded, setLoaded] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [newKeyword, setNewKeyword] = useState("");
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
   useEffect(() => {
     function reload() {
@@ -23,6 +25,28 @@ export default function SettingsWindow() {
     window.addEventListener("focus", reload);
     return () => window.removeEventListener("focus", reload);
   }, []);
+
+  async function handleCheckUpdate() {
+    try {
+      setUpdateChecking(true);
+      setUpdateStatus("更新を確認中...");
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (update) {
+        setUpdateStatus(`最新バージョン (${update.version}) を取得しました。インストール中...`);
+        await update.downloadAndInstall();
+        setUpdateStatus("更新完了。アプリを再起動します...");
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } else {
+        setUpdateStatus("現在は最新のバージョンです。");
+      }
+    } catch (e) {
+      setUpdateStatus(`確認スキップまたはエラー: ${e}`);
+    } finally {
+      setUpdateChecking(false);
+    }
+  }
 
   async function handleClose() {
     try {
@@ -107,6 +131,24 @@ export default function SettingsWindow() {
           <div style={{ padding: 16, color: "var(--text-muted)" }}>読み込み中...</div>
         ) : (
           <>
+            {/* アプリケーション更新 */}
+            <section className="settings-section">
+              <h3>アプリケーションの更新</h3>
+              <div className="settings-row">
+                <label className="settings-label">現在のバージョン: Ver.0.2.1</label>
+                <button
+                  className="tab-btn active"
+                  style={{ padding: "6px 14px", borderRadius: 4, cursor: "pointer" }}
+                  onClick={handleCheckUpdate}
+                  disabled={updateChecking}
+                >
+                  {updateChecking ? "確認中..." : "アップデートを確認"}
+                </button>
+              </div>
+              {updateStatus && <p className="settings-hint" style={{ color: "var(--accent)", marginTop: 6, fontWeight: "bold" }}>{updateStatus}</p>}
+              <p className="settings-hint">GitHub Releases より自動アプデを取得し、再起動して最新化します。</p>
+            </section>
+
             {/* ファイルリスト */}
             <section className="settings-section">
               <h3>ファイルリスト</h3>

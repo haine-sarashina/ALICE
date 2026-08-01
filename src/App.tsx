@@ -1,5 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { ask } from "@tauri-apps/plugin-dialog";
 import LeftPane from "./components/LeftPane";
 import EditorPane, { type EditorTab } from "./components/EditorPane";
 import ConsolePane from "./components/ConsolePane";
@@ -53,6 +56,28 @@ export default function App() {
   function reloadSettings() {
     loadSettings().then(setSettings).catch(() => {});
   }
+
+  // 起動時の自動アップデート確認（数秒後に非接触チェック）
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const update = await check();
+        if (update) {
+          const yes = await ask(`新しいバージョン (${update.version}) が見つかりました。\nアップデートをダウンロード・インストールして再起動しますか？`, {
+            title: "ALICE 更新通知",
+            kind: "info",
+          });
+          if (yes) {
+            await update.downloadAndInstall();
+            await relaunch();
+          }
+        }
+      } catch (e) {
+        console.log("アプデ確認スキップ (開発モードやオフライン等):", e);
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     reloadSettings();
