@@ -238,7 +238,14 @@ export default function EditorPane({
 
   return (
     <div className="pane editor-pane">
-      <div className="pane-tabs">
+      <div
+        className="pane-tabs"
+        onWheel={(e) => {
+          if (e.deltaY !== 0) {
+            e.currentTarget.scrollLeft += e.deltaY;
+          }
+        }}
+      >
         {tabs.map((tab) => (
           <div
             key={tab.id}

@@ -681,7 +681,14 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
 
   return (
     <div className="pane left-pane">
-      <div className="pane-tabs">
+      <div
+        className="pane-tabs"
+        onWheel={(e) => {
+          if (e.deltaY !== 0) {
+            e.currentTarget.scrollLeft += e.deltaY;
+          }
+        }}
+      >
         <button
           className={`tab-btn ${activeTab === "files" ? "active" : ""}`}
           onClick={() => setActiveTab("files")}

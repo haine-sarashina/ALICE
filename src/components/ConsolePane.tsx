@@ -334,7 +334,14 @@ export default function ConsolePane({ cwd }: { cwd?: string }) {
 
   return (
     <div className="pane console-pane">
-      <div className="pane-tabs">
+      <div
+        className="pane-tabs"
+        onWheel={(e) => {
+          if (e.deltaY !== 0) {
+            e.currentTarget.scrollLeft += e.deltaY;
+          }
+        }}
+      >
         {tabs.map((t) => (
           <button key={t.id} className={`tab-btn ${activeTab === t.id ? "active" : ""}`} onClick={() => setActiveTab(t.id)}>
             {t.label}

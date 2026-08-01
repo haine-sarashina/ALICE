@@ -64,7 +64,14 @@ export default function RightPane({ widgetItems, settings, onPhotoClick, onNewsC
 
   return (
     <div className="pane right-pane">
-      <div className="pane-tabs">
+      <div
+        className="pane-tabs"
+        onWheel={(e) => {
+          if (e.deltaY !== 0) {
+            e.currentTarget.scrollLeft += e.deltaY;
+          }
+        }}
+      >
         <button
           className={`tab-btn ${activeTab === 0 ? "active" : ""}`}
           onClick={() => setActiveTab(0)}

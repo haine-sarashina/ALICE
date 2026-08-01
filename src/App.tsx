@@ -486,7 +486,7 @@ export default function App() {
     <div className="app-layout">
       <header className="app-header" data-tauri-drag-region>
         <span className="app-title" data-tauri-drag-region>ALICE</span>
-        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.2.0 )</span>
+        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.2.1 )</span>
         <div className="window-controls">
           <button
             className="wc-btn wc-settings"
