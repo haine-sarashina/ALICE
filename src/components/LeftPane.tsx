@@ -230,6 +230,23 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
     setLoading(false);
   }
 
+  async function refreshFileTree() {
+    if (!currentDir) return;
+    const dirs = Array.from(expandedDirs);
+    if (!dirs.includes(currentDir)) dirs.push(currentDir);
+    const results = await Promise.all(dirs.map(async (dir) => {
+      const items = await loadDir(dir);
+      return items ? [dir, items] as const : null;
+    }));
+    setDirContents(prev => {
+      const next = new Map(prev);
+      for (const r of results) {
+        if (r) next.set(r[0], r[1]);
+      }
+      return next;
+    });
+  }
+
   async function openDirectory() {
     try {
       const dir = await openDialog({ directory: true, multiple: false, title: "フォルダを選択" });
@@ -747,6 +764,9 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
                 </button>
                 <button className="btn-small" onClick={() => startCreate(getSelectedDir(), "folder")} title="新規フォルダ">
                   +D
+                </button>
+                <button className="btn-small" onClick={refreshFileTree} title="更新">
+                  ↻
                 </button>
               </div>
               <span className="dir-path" title={currentDir}>

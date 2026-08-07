@@ -4,7 +4,6 @@ import WeatherWidget from "./WeatherWidget";
 import SystemMonitorWidget from "./SystemMonitorWidget";
 import PhotoWidget from "./PhotoWidget";
 import NewsWidget from "./NewsWidget";
-import ClaudeCodeWidget from "./ClaudeCodeWidget";
 import ClockWidget from "./ClockWidget";
 import InfoWidget from "./InfoWidget";
 import BatteryWidget from "./BatteryWidget";
@@ -55,7 +54,6 @@ export default function RightPane({ widgetItems, settings, onPhotoClick, onNewsC
       />
     );
     case "systemMonitor": return <SystemMonitorWidget />;
-    case "claudeCode": return <ClaudeCodeWidget />;
     case "battery": return <BatteryWidget />;
     case "info": return <InfoWidget />;
     default: return null;
