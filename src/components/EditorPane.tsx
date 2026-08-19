@@ -60,6 +60,21 @@ export default function EditorPane({
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   const tabContextMenuRef = useRef<HTMLDivElement>(null);
 
+  // タブヘッダー参照
+  const tabsHeaderRef = useRef<HTMLDivElement>(null);
+
+  // アクティブタブが変更されたらタブバーの表示範囲内に瞬時移動
+  useEffect(() => {
+    if (!activeTabId || !tabsHeaderRef.current) return;
+    const timer = setTimeout(() => {
+      const activeEl = tabsHeaderRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeTabId)}"]`);
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [activeTabId, tabs]);
+
   useEffect(() => {
     if (!tabContextMenu) return;
     const handleClick = () => setTabContextMenu(null);
@@ -239,6 +254,7 @@ export default function EditorPane({
   return (
     <div className="pane editor-pane">
       <div
+        ref={tabsHeaderRef}
         className="pane-tabs"
         onWheel={(e) => {
           if (e.deltaY !== 0) {
@@ -249,6 +265,7 @@ export default function EditorPane({
         {tabs.map((tab) => (
           <div
             key={tab.id}
+            data-tab-id={tab.id}
             className={`tab-item ${tab.id === activeTabId ? "active" : ""}`}
             onClick={() => onTabSelect(tab.id)}
             onContextMenu={(e) => {

@@ -1,7 +1,7 @@
 {
   "name": "alice",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,7 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "jsdom": "^26.1.0",
-    "typescript": "~5.6.2",
+    "typescript": "~7.0.2",
     "vite": "^6.0.3",
     "vitest": "^2.0.0"
   }

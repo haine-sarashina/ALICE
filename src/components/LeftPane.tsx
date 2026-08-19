@@ -498,7 +498,7 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
     const timer = setTimeout(() => {
       const el = fileListRef.current?.querySelector(`[data-filepath="${CSS.escape(selectedFilePath)}"]`);
       if (el) {
-        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        el.scrollIntoView({ block: "nearest", behavior: "auto" });
       }
     }, 50);
     return () => clearTimeout(timer);
@@ -527,8 +527,10 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
             onDrop={(e) => handleDrop(e, item)}
             onDragEnd={handleDragEnd}
           >
-            {item.isDir && (
+            {item.isDir ? (
               <span className="tree-arrow">{isExpanded ? "▾" : "▸"}</span>
+            ) : (
+              <span className="tree-arrow-placeholder" />
             )}
             <FileIcon isDir={item.isDir} accessible={item.accessible} name={item.name} />
             {renamingPath === item.path ? (
@@ -778,6 +780,7 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
             <ul className="file-items tree-root">
               {creating?.parentDir === currentDir && (
                 <li className="file-item create-item" style={{ paddingLeft: "8px" }}>
+                  <span className="tree-arrow-placeholder" />
                   <FileIcon isDir={creating.type === "folder"} accessible={true} name={createName || "new"} />
                   <input
                     ref={createRef}
