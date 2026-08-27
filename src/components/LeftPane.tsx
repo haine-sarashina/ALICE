@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -382,11 +383,9 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
   function handleContextMenu(e: React.MouseEvent, item: FileItem) {
     e.preventDefault();
     e.stopPropagation();
-    const paneEl = e.currentTarget.closest('.pane');
-    const paneRect = paneEl ? paneEl.getBoundingClientRect() : { left: 0, top: 0 };
     setContextMenu({
-      x: e.clientX - paneRect.left,
-      y: e.clientY - paneRect.top,
+      x: e.clientX,
+      y: e.clientY,
       item,
     });
   }
@@ -854,20 +853,20 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
       </div>
 
       {/* コンテキストメニュー */}
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
           className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
+          style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, zIndex: 99999 }}
           ref={(el) => {
             if (!el) return;
             const rect = el.getBoundingClientRect();
             const vw = window.innerWidth;
             const vh = window.innerHeight;
-            if (rect.bottom > vh) {
-              el.style.top = `${contextMenu.y - rect.height}px`;
-            }
             if (rect.right > vw) {
-              el.style.left = `${contextMenu.x - rect.width}px`;
+              el.style.left = `${Math.max(8, contextMenu.x - rect.width)}px`;
+            }
+            if (rect.bottom > vh) {
+              el.style.top = `${Math.max(8, contextMenu.y - rect.height)}px`;
             }
           }}
           onClick={(e) => e.stopPropagation()}
@@ -892,7 +891,8 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
           <button className="context-menu-item danger" onClick={() => handleDelete(contextMenu.item)}>
             削除
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

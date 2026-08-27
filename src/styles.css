@@ -537,15 +537,15 @@ html, body, #root { height: 100%; overflow: hidden; background: var(--bg-base); 
 
 /* コンテキストメニュー */
 .context-menu {
-  position: absolute;
-  z-index: 1000;
-  background: rgba(30, 30, 46, 0.9);
+  position: fixed;
+  z-index: 99999;
+  background: rgba(30, 30, 46, 0.95);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
   padding: 4px 0;
-  min-width: 120px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  min-width: 130px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.7);
 }
 .context-menu-item {
   display: block;

@@ -447,12 +447,12 @@ export default function App() {
   }
 
   // カーソル位置変更コールバック
-  function handleCursorChange(id: string, start: number, end: number, scrollTop?: number, scrollLeft?: number) {
+  const handleCursorChange = useCallback((id: string, start: number, end: number, scrollTop?: number, scrollLeft?: number) => {
     const tab = editorTabsRef.current.find(t => t.id === id);
     if (tab?.path) {
       cursorPositionsRef.current[tab.path] = { start, end, scrollTop, scrollLeft };
     }
-  }
+  }, []);
 
   // 写真クリック → エディタタブで画像表示
   function handlePhotoClick(path: string, dataUrl: string) {
@@ -510,7 +510,7 @@ export default function App() {
     <div className="app-layout">
       <header className="app-header" data-tauri-drag-region>
         <span className="app-title" data-tauri-drag-region>ALICE</span>
-        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.3.1 )</span>
+        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.3.2 )</span>
         <div className="window-controls">
           <button
             className="wc-btn wc-settings"

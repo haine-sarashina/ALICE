@@ -135,7 +135,7 @@ export default function SettingsWindow() {
             <section className="settings-section">
               <h3>アプリケーションの更新</h3>
               <div className="settings-row">
-                <label className="settings-label">現在のバージョン: Ver.0.3.1</label>
+                <label className="settings-label">現在のバージョン: Ver.0.3.2</label>
                 <button
                   className="tab-btn active"
                   style={{ padding: "6px 14px", borderRadius: 4, cursor: "pointer" }}

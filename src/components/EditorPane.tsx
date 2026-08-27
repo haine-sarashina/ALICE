@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import type { CursorPos } from "../lib/settings";
 
@@ -125,38 +126,44 @@ export default function EditorPane({
     return () => observer.disconnect();
   }, [isMarkdown, activeTabId]);
 
-  // 現在のアクティブタブ参照
+  // 最新の値への参照
   const currentActiveTabRef = useRef<EditorTab | undefined>(activeTab);
   currentActiveTabRef.current = activeTab;
+  const tabsRef = useRef<EditorTab[]>(tabs);
+  tabsRef.current = tabs;
+  const cursorPositionsRef = useRef<Record<string, CursorPos> | undefined>(cursorPositions);
+  cursorPositionsRef.current = cursorPositions;
+  const onCursorChangeRef = useRef(onCursorChange);
+  onCursorChangeRef.current = onCursorChange;
   const prevTabIdRef = useRef<string | null>(null);
 
   // カーソル・スクロール位置の保存
-  const saveCurrentCursorPos = useCallback((targetTab?: EditorTab) => {
+  const saveCurrentCursorPos = (targetTab?: EditorTab) => {
     const tab = targetTab ?? currentActiveTabRef.current;
     const ta = textareaRef.current;
-    if (!tab || !ta || tab.type === "image" || tab.type === "browser" || tab.type === "search" || !onCursorChange) return;
-    onCursorChange(tab.id, ta.selectionStart, ta.selectionEnd, ta.scrollTop, ta.scrollLeft);
-  }, [onCursorChange]);
+    if (!tab || !ta || tab.type === "image" || tab.type === "browser" || tab.type === "search" || !onCursorChangeRef.current) return;
+    onCursorChangeRef.current(tab.id, ta.selectionStart, ta.selectionEnd, ta.scrollTop, ta.scrollLeft);
+  };
 
-  // タブ切り替え時のカーソル位置・スクロール位置の保存と復元
+  // タブ切り替え時（activeTabId 変更時）のみカーソル位置・スクロール位置の保存と復元を行う
   useEffect(() => {
     // 前回のタブのカーソル・スクロール位置を保存
     if (prevTabIdRef.current && prevTabIdRef.current !== activeTabId) {
-      const prevTab = tabs.find(t => t.id === prevTabIdRef.current);
+      const prevTab = tabsRef.current.find(t => t.id === prevTabIdRef.current);
       if (prevTab) {
         saveCurrentCursorPos(prevTab);
       }
     }
     prevTabIdRef.current = activeTabId;
 
-    const ta = textareaRef.current;
-    if (!ta || !activeTab || tabType !== "text" || !activeTab.path) return;
+    const currentTab = tabsRef.current.find(t => t.id === activeTabId);
+    if (!currentTab || currentTab.type === "image" || currentTab.type === "browser" || currentTab.type === "search" || !currentTab.path) return;
 
-    const pos = cursorPositions?.[activeTab.path];
+    const pos = cursorPositionsRef.current?.[currentTab.path];
     requestAnimationFrame(() => {
       if (!textareaRef.current) return;
       const t = textareaRef.current;
-      const maxLen = activeTab.content.length;
+      const maxLen = currentTab.content.length;
       if (pos) {
         const start = Math.min(pos.start, maxLen);
         const end = Math.min(pos.end, maxLen);
@@ -173,7 +180,7 @@ export default function EditorPane({
         }
       }
     });
-  }, [activeTabId, activeTab?.path, saveCurrentCursorPos]);
+  }, [activeTabId]);
 
   // 画像サイズ取得 & ズームリセット
   useEffect(() => {
@@ -296,11 +303,9 @@ export default function EditorPane({
             onClick={() => onTabSelect(tab.id)}
             onContextMenu={(e) => {
               e.preventDefault();
-              const paneEl = e.currentTarget.closest('.pane');
-              const paneRect = paneEl ? paneEl.getBoundingClientRect() : { left: 0, top: 0 };
               setTabContextMenu({
-                x: e.clientX - paneRect.left,
-                y: e.clientY - paneRect.top,
+                x: e.clientX,
+                y: e.clientY,
                 tabId: tab.id,
               });
             }}
@@ -321,7 +326,7 @@ export default function EditorPane({
         <button className="tab-btn new-tab" onClick={onNewTab}>+</button>
       </div>
 
-      {tabContextMenu && (
+      {tabContextMenu && createPortal(
         <div
           ref={(el) => {
             tabContextMenuRef.current = el;
@@ -329,17 +334,17 @@ export default function EditorPane({
             const rect = el.getBoundingClientRect();
             const vw = window.innerWidth;
             const vh = window.innerHeight;
+            // 画面右端を超える場合は左側に反転展開
             if (rect.right > vw) {
-              const overflow = rect.right - vw + 8;
-              el.style.left = `${Math.max(0, tabContextMenu.x - overflow)}px`;
+              el.style.left = `${Math.max(8, tabContextMenu.x - rect.width)}px`;
             }
+            // 画面下端を超える場合は上側に反転展開
             if (rect.bottom > vh) {
-              const overflow = rect.bottom - vh + 8;
-              el.style.top = `${Math.max(0, tabContextMenu.y - overflow)}px`;
+              el.style.top = `${Math.max(8, tabContextMenu.y - rect.height)}px`;
             }
           }}
           className="context-menu"
-          style={{ position: "absolute", left: tabContextMenu.x, top: tabContextMenu.y, zIndex: 9999 }}
+          style={{ position: "fixed", left: tabContextMenu.x, top: tabContextMenu.y, zIndex: 99999 }}
           onClick={(e) => e.stopPropagation()}
         >
           <div
@@ -372,7 +377,8 @@ export default function EditorPane({
           >
             右側のタブをすべて閉じる
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {tabType === "text" && (
