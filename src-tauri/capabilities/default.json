@@ -29,8 +29,6 @@
     {
       "identifier": "shell:allow-spawn",
       "allow": [
-        { "name": "claude", "cmd": "claude", "args": true, "sidecar": false },
-        { "name": "cmd-claude", "cmd": "cmd", "args": true, "sidecar": false },
         { "name": "ollama", "cmd": "ollama", "args": true, "sidecar": false },
         { "name": "cmd-ollama", "cmd": "cmd", "args": true, "sidecar": false },
         { "name": "powershell", "cmd": "powershell", "args": true, "sidecar": false },

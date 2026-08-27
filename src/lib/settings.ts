@@ -63,6 +63,8 @@ export const WIDGET_LABELS: Record<string, string> = {
 
 export async function loadSettings(): Promise<AppSettings> {
   const settings = await invoke<AppSettings>("load_settings");
+  // 廃止された claudeCode を既存の設定ファイルから自動除去
+  settings.widgets.items = settings.widgets.items.filter((w) => w.id !== "claudeCode");
   // 既存の settings.json に新しいウィジェットが含まれていない場合にマージ
   const existingIds = new Set(settings.widgets.items.map((w) => w.id));
   const missingWidgets = DEFAULT_SETTINGS.widgets.items.filter(
@@ -87,6 +89,8 @@ export async function openSettingsWindow(): Promise<void> {
 export interface CursorPos {
   start: number;
   end: number;
+  scrollTop?: number;
+  scrollLeft?: number;
 }
 
 export interface DirTabState {

@@ -75,7 +75,6 @@ impl Default for AppSettings {
                     WidgetItem { id: "photo".into(), visible: true },
                     WidgetItem { id: "news".into(), visible: true },
                     WidgetItem { id: "systemMonitor".into(), visible: true },
-                    WidgetItem { id: "claudeCode".into(), visible: true },
                     WidgetItem { id: "battery".into(), visible: true },
                     WidgetItem { id: "info".into(), visible: true },
                 ],
@@ -131,6 +130,10 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
 pub struct CursorPos {
     start: u32,
     end: u32,
+    #[serde(default)]
+    scroll_top: Option<f64>,
+    #[serde(default)]
+    scroll_left: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -564,51 +567,6 @@ fn decode_html_entities(s: &str) -> String {
         }
     }
     result
-}
-
-// ─── Claude Code 使用状況 ───
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeUsageInfo {
-    logged_in: bool,
-    auth_method: Option<String>,
-    email: Option<String>,
-    org_name: Option<String>,
-    subscription_type: Option<String>,
-    error: Option<String>,
-}
-
-#[tauri::command]
-fn get_claude_usage() -> Result<ClaudeUsageInfo, String> {
-    // claude auth status は JSON を返す
-    let output = silent_command("claude")
-        .args(["auth", "status"])
-        .output()
-        .map_err(|e| format!("claude コマンドの実行に失敗: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-
-    // JSON パース
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout) {
-        Ok(ClaudeUsageInfo {
-            logged_in: val.get("loggedIn").and_then(|v| v.as_bool()).unwrap_or(false),
-            auth_method: val.get("authMethod").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            email: val.get("email").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            org_name: val.get("orgName").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            subscription_type: val.get("subscriptionType").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            error: None,
-        })
-    } else {
-        Ok(ClaudeUsageInfo {
-            logged_in: false,
-            auth_method: None,
-            email: None,
-            org_name: None,
-            subscription_type: None,
-            error: Some(stdout.trim().to_string()),
-        })
-    }
 }
 
 // ─── LM Studio チャットプロキシ ───
@@ -1212,15 +1170,6 @@ fn ollama_installed() -> bool {
 }
 
 #[tauri::command]
-fn claude_installed() -> bool {
-    silent_command("claude")
-        .args(["--version"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-#[tauri::command]
 fn ollama_models() -> Result<Vec<String>, String> {
     let out = silent_command("ollama")
         .args(["list"])
@@ -1382,7 +1331,7 @@ mod tests {
         assert_eq!(s.editor.font_size, 13);
         assert_eq!(s.widgets.photo_interval, 10);
         assert_eq!(s.widgets.news_interval, 30);
-        assert_eq!(s.widgets.items.len(), 9);
+        assert_eq!(s.widgets.items.len(), 8);
         assert!(s.widgets.photo_folder.is_none());
         assert!(s.widgets.news_keywords.is_empty());
         assert!(s.last_open_dir.is_none());
@@ -1397,7 +1346,6 @@ mod tests {
         assert!(ids.contains(&"calendar"));
         assert!(ids.contains(&"weather"));
         assert!(ids.contains(&"battery"));
-        assert!(ids.contains(&"claudeCode"));
     }
 
     // ─── write_file / read_file ───
@@ -1510,14 +1458,12 @@ pub fn run() {
             git_has_remote,
             git_has_unpushed,
             lm_chat,
-            get_claude_usage,
             grep_files,
             list_directories_only,
             get_battery_info,
             watch_directory,
             unwatch_directory,
             ollama_installed,
-            claude_installed,
             ollama_models,
         ])
         .on_window_event(|window, event| {

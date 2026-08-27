@@ -110,7 +110,6 @@ function ShellTab({ cwd }: { cwd?: string }) {
 // Ollamaタブ（モデル選択＋起動＋コンソール）
 function OllamaTab({ cwd }: { cwd?: string }) {
   const [ollamaOk, setOllamaOk] = useState<boolean | null>(null);
-  const [claudeOk, setClaudeOk] = useState<boolean | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [modelsError, setModelsError] = useState<string>("");
@@ -127,12 +126,8 @@ function OllamaTab({ cwd }: { cwd?: string }) {
 
   const refreshChecks = useCallback(async () => {
     try {
-      const [oi, ci] = await Promise.all([
-        invoke<boolean>("ollama_installed"),
-        invoke<boolean>("claude_installed"),
-      ]);
+      const oi = await invoke<boolean>("ollama_installed");
       setOllamaOk(oi);
-      setClaudeOk(ci);
       if (oi) {
         try {
           const ms = await invoke<string[]>("ollama_models");
@@ -148,7 +143,6 @@ function OllamaTab({ cwd }: { cwd?: string }) {
       }
     } catch (e) {
       setOllamaOk(false);
-      setClaudeOk(false);
       setModelsError(String(e));
     }
   }, []);
@@ -160,24 +154,20 @@ function OllamaTab({ cwd }: { cwd?: string }) {
   async function launch() {
     if (!selectedModel || running) return;
     const prompt = initialPrompt.trim();
-    if (!prompt) {
-      setLines(prev => [...prev, "[エラー] プロンプトを入力してください（claude --print には stdin 経由で入力が必要です）"]);
-      return;
-    }
     if (childRef.current) {
       try { await childRef.current.kill(); } catch {}
       childRef.current = null;
     }
 
-    const cmdLine = `ollama launch claude --model ${selectedModel}`;
-    setLines(prev => [...prev, `> ${cmdLine}`, `[prompt] ${prompt}`]);
+    const cmdLine = `ollama run ${selectedModel}`;
+    setLines(prev => [...prev, `> ${cmdLine}`, ...(prompt ? [`[prompt] ${prompt}`] : [])]);
     setRunning(true);
 
     const isWin = navigator.platform.startsWith("Win");
     const cmdName = isWin ? "cmd-ollama" : "ollama";
     const args = isWin
-      ? ["/c", "ollama", "launch", "claude", "--model", selectedModel]
-      : ["launch", "claude", "--model", selectedModel];
+      ? ["/c", "ollama", "run", selectedModel]
+      : ["run", selectedModel];
 
     try {
       const cmd = Command.create(cmdName, args, { encoding: "utf8", ...(cwd ? { cwd } : {}) });
@@ -199,11 +189,12 @@ function OllamaTab({ cwd }: { cwd?: string }) {
       });
       const child = await cmd.spawn();
       childRef.current = child;
-      // claude --print は stdin 入力を 3 秒しか待たないため spawn 直後に書き込む
-      try {
-        await child.write(prompt + "\n");
-      } catch (e) {
-        setLines(prev => [...prev, `[stdin書き込み失敗] ${e}`]);
+      if (prompt) {
+        try {
+          await child.write(prompt + "\n");
+        } catch (e) {
+          setLines(prev => [...prev, `[stdin書き込み失敗] ${e}`]);
+        }
       }
     } catch (e) {
       setLines(prev => [...prev, `起動失敗: ${e}`]);
@@ -236,26 +227,17 @@ function OllamaTab({ cwd }: { cwd?: string }) {
     };
   }, []);
 
-  const showMissingNotice = ollamaOk === false || claudeOk === false;
+  const showMissingNotice = ollamaOk === false;
 
   return (
     <>
       {showMissingNotice && (
         <div className="ollama-notice">
-          {ollamaOk === false && (
-            <div className="notice-line">
-              Ollama がインストールされていません。
-              <a href="https://ollama.com/download" target="_blank" rel="noreferrer">こちら</a>
-              からインストールしてください。
-            </div>
-          )}
-          {claudeOk === false && (
-            <div className="notice-line">
-              Claude Code がインストールされていません。
-              <a href="https://docs.claude.com/en/docs/claude-code/overview" target="_blank" rel="noreferrer">こちら</a>
-              からインストールしてください。
-            </div>
-          )}
+          <div className="notice-line">
+            Ollama がインストールされていません。
+            <a href="https://ollama.com/download" target="_blank" rel="noreferrer">こちら</a>
+            からインストールしてください。
+          </div>
           <button className="btn-small" onClick={refreshChecks}>再チェック</button>
         </div>
       )}
@@ -273,7 +255,7 @@ function OllamaTab({ cwd }: { cwd?: string }) {
         </select>
         <input
           className="ollama-prompt-input"
-          placeholder="初回プロンプト（起動時に stdin へ送信）"
+          placeholder="初回プロンプト（起動時に送信）"
           value={initialPrompt}
           onChange={(e) => setInitialPrompt(e.target.value)}
           disabled={running}
@@ -281,7 +263,7 @@ function OllamaTab({ cwd }: { cwd?: string }) {
         <button
           className="btn-small"
           onClick={launch}
-          disabled={!ollamaOk || !claudeOk || !selectedModel || !initialPrompt.trim() || running}
+          disabled={!ollamaOk || !selectedModel || running}
         >
           起動
         </button>

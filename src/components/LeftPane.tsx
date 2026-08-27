@@ -382,7 +382,13 @@ export default function LeftPane({ onFileOpen, onDiffOpen, onGrepResult, selecte
   function handleContextMenu(e: React.MouseEvent, item: FileItem) {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, item });
+    const paneEl = e.currentTarget.closest('.pane');
+    const paneRect = paneEl ? paneEl.getBoundingClientRect() : { left: 0, top: 0 };
+    setContextMenu({
+      x: e.clientX - paneRect.left,
+      y: e.clientY - paneRect.top,
+      item,
+    });
   }
 
   // グローバルクリックでメニューを閉じる

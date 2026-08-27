@@ -389,7 +389,6 @@ export default function App() {
         setEditorTabs([]);
         setActiveTabId(null);
         tabHistoryRef.current = [];
-        cursorPositionsRef.current = {};
       }
       // 最近のフォルダ履歴を更新（最大5件）
       const recent = (prev.recentDirs ?? []).filter(d => d !== dir);
@@ -448,10 +447,10 @@ export default function App() {
   }
 
   // カーソル位置変更コールバック
-  function handleCursorChange(id: string, start: number, end: number) {
+  function handleCursorChange(id: string, start: number, end: number, scrollTop?: number, scrollLeft?: number) {
     const tab = editorTabsRef.current.find(t => t.id === id);
     if (tab?.path) {
-      cursorPositionsRef.current[tab.path] = { start, end };
+      cursorPositionsRef.current[tab.path] = { start, end, scrollTop, scrollLeft };
     }
   }
 
@@ -511,7 +510,7 @@ export default function App() {
     <div className="app-layout">
       <header className="app-header" data-tauri-drag-region>
         <span className="app-title" data-tauri-drag-region>ALICE</span>
-        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.3.0 )</span>
+        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.3.1 )</span>
         <div className="window-controls">
           <button
             className="wc-btn wc-settings"
