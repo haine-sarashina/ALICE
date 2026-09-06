@@ -9,6 +9,8 @@ export interface EditorTab {
   name: string;
   content: string;
   modified: boolean;
+  /** プレビュータブ（未編集で斜体表示、他ファイルを開いた際に置き換え対象） */
+  isPreview?: boolean;
   /** "text" = コードエディタ, "image" = 画像表示, "browser" = Web表示, "diff" = Diff表示, "search" = 検索結果 */
   type?: "text" | "image" | "browser" | "diff" | "search";
   /** 検索結果タブ用: 検索クエリ */
@@ -24,6 +26,7 @@ interface EditorPaneProps {
   activeTabId: string | null;
   onTabSelect: (id: string) => void;
   onTabClose: (id: string) => void;
+  onTabPin?: (id: string) => void;
   onContentChange: (id: string, content: string) => void;
   onSaved: (id: string) => void;
   onNewTab: () => void;
@@ -39,6 +42,7 @@ export default function EditorPane({
   activeTabId,
   onTabSelect,
   onTabClose,
+  onTabPin,
   onContentChange,
   onSaved,
   onNewTab,
@@ -157,9 +161,9 @@ export default function EditorPane({
     prevTabIdRef.current = activeTabId;
 
     const currentTab = tabsRef.current.find(t => t.id === activeTabId);
-    if (!currentTab || currentTab.type === "image" || currentTab.type === "browser" || currentTab.type === "search" || !currentTab.path) return;
+    if (!currentTab || currentTab.type === "image" || currentTab.type === "browser" || currentTab.type === "search") return;
 
-    const pos = cursorPositionsRef.current?.[currentTab.path];
+    const pos = currentTab.path ? cursorPositionsRef.current?.[currentTab.path] : undefined;
     requestAnimationFrame(() => {
       if (!textareaRef.current) return;
       const t = textareaRef.current;
@@ -177,6 +181,15 @@ export default function EditorPane({
         }
         if (pos.scrollLeft != null) {
           t.scrollLeft = pos.scrollLeft;
+        }
+      } else {
+        // 新しく開いたファイルや位置未保存のファイルは一番上（先頭）に配置
+        t.selectionStart = 0;
+        t.selectionEnd = 0;
+        t.scrollTop = 0;
+        t.scrollLeft = 0;
+        if (lineNumberRef.current) {
+          lineNumberRef.current.scrollTop = 0;
         }
       }
     });
@@ -299,8 +312,9 @@ export default function EditorPane({
           <div
             key={tab.id}
             data-tab-id={tab.id}
-            className={`tab-item ${tab.id === activeTabId ? "active" : ""}`}
+            className={`tab-item ${tab.id === activeTabId ? "active" : ""} ${tab.isPreview ? "preview" : ""}`}
             onClick={() => onTabSelect(tab.id)}
+            onDoubleClick={() => onTabPin?.(tab.id)}
             onContextMenu={(e) => {
               e.preventDefault();
               setTabContextMenu({
@@ -309,8 +323,9 @@ export default function EditorPane({
                 tabId: tab.id,
               });
             }}
+            title={tab.isPreview ? `${tab.path} (ダブルクリックでタブを固定)` : tab.path}
           >
-            <span className="tab-label">
+            <span className={`tab-label ${tab.isPreview ? "tab-preview" : ""}`}>
               {tab.modified ? "● " : ""}
               {tab.type === "image" ? "🖼 " : tab.type === "browser" ? "🌐 " : tab.type === "diff" ? "±" : tab.type === "search" ? "🔍 " : ""}
               {tab.name}

@@ -300,21 +300,46 @@ export default function App() {
   }, []);
 
   const openFile = useCallback((path: string, content: string) => {
-    const existing = editorTabsRef.current.find((t) => t.path === path);
+    const tabs = editorTabsRef.current;
+    const existing = tabs.find((t) => t.path === path);
     if (existing) {
       selectTab(existing.id);
       return;
     }
     const name = path.split(/[\\/]/).pop() ?? path;
-    const newTab: EditorTab = {
-      id: `tab-${tabCounter++}`,
-      path,
-      name,
-      content,
-      modified: false,
-    };
-    setEditorTabs((prev) => [...prev, newTab]);
-    selectTab(newTab.id);
+
+    // 変更されていないプレビュー中のタブがあれば置き換える
+    const previewTab = tabs.find((t) => t.isPreview && !t.modified);
+
+    if (previewTab) {
+      setEditorTabs((prev) =>
+        prev.map((t) =>
+          t.id === previewTab.id
+            ? {
+                ...t,
+                path,
+                name,
+                content,
+                modified: false,
+                isPreview: true,
+                type: "text",
+              }
+            : t
+        )
+      );
+      selectTab(previewTab.id);
+    } else {
+      const newTab: EditorTab = {
+        id: `tab-${tabCounter++}`,
+        path,
+        name,
+        content,
+        modified: false,
+        isPreview: true,
+      };
+      setEditorTabs((prev) => [...prev, newTab]);
+      selectTab(newTab.id);
+    }
   }, []);
 
   function newTab() {
@@ -324,10 +349,18 @@ export default function App() {
       name: "新しいファイル",
       content: "",
       modified: false,
+      isPreview: false,
     };
     setEditorTabs((prev) => [...prev, newT]);
     selectTab(newT.id);
   }
+
+  // タブのピン留め（イタリック解除・固定化）
+  const pinTab = useCallback((id: string) => {
+    setEditorTabs((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, isPreview: false } : t))
+    );
+  }, []);
 
   function selectTab(id: string) {
     setActiveTabId((prev) => {
@@ -362,7 +395,7 @@ export default function App() {
 
   function updateContent(id: string, content: string) {
     setEditorTabs((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, content, modified: true } : t))
+      prev.map((t) => (t.id === id ? { ...t, content, modified: true, isPreview: false } : t))
     );
   }
 
@@ -510,7 +543,7 @@ export default function App() {
     <div className="app-layout">
       <header className="app-header" data-tauri-drag-region>
         <span className="app-title" data-tauri-drag-region>ALICE</span>
-        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.3.2 )</span>
+        <span className="app-subtitle" data-tauri-drag-region>AI Local Interface for Code Editor ( Ver.0.3.3 )</span>
         <div className="window-controls">
           <button
             className="wc-btn wc-settings"
@@ -551,6 +584,7 @@ export default function App() {
             activeTabId={activeTabId}
             onTabSelect={selectTab}
             onTabClose={closeTab}
+            onTabPin={pinTab}
             onContentChange={updateContent}
             onSaved={markSaved}
             onNewTab={newTab}
